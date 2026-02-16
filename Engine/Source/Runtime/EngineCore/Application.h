@@ -8,8 +8,7 @@
 #include <stdexcept>
 #include <fstream>
 
-#include "glm/vec2.hpp"
-#include "glm/vec3.hpp"
+#include "glm/glm.hpp"
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #	include <vulkan/vulkan_raii.hpp>
@@ -48,6 +47,12 @@ const std::vector<uint16_t> indices = {
 	0, 1, 2, 2, 3, 0
 };
 
+struct UniformBufferObject {
+	glm::mat4 model;
+	glm::mat4 view;
+	glm::mat4 proj;
+};
+
 class Application
 {
 public:
@@ -56,6 +61,7 @@ public:
 
     virtual void Run();
 	void MainLoop();
+	void RecreateSwapChain();
 	void Cleanup();
 private:
 
@@ -71,12 +77,17 @@ private:
 	void CreateLogicalDevice();
 	void CreateSwapChain();
 	void CreateImageViews();
+	void CreateDescriptorSetLayout();
 	void CreateGraphicsPipeline();
 	void CreateCommandPool();
 	void CreateVertexBuffer();
 	void CreateIndexBuffer();
+	void CreateUniformBuffers();
+	void UpdateUniformBuffer(uint32_t currentImage);
 	void CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
-	void CreateCommandBuffer();
+	void CreateDescriptorPool();
+	void CreateDescriptorSets();
+	void CreateCommandBuffers();
 	void CreateSyncObjects();
 	void drawFrame();
 	void recordCommandBuffer(uint32_t imageIndex);
@@ -87,6 +98,7 @@ private:
 
 	//helpers function- vulkan
 	vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
+	void CleanupSwapChain();
 
 	static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities)
 	{
@@ -193,6 +205,13 @@ private:
 
 		throw std::runtime_error("failed to find suitable memory type!");
 	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+	{
+		auto app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+		app->framebufferResized = true;
+	}
+
 protected:
 	bool bIsApplicationRunning = true;
 
@@ -213,17 +232,26 @@ private:
 	vk::Extent2D                     VulkanSwapChainExtent;
 	std::vector<vk::raii::ImageView> VulkanSwapChainImageViews;
 	uint32_t                         queueIndex = ~0;
+	vk::raii::DescriptorSetLayout VulkanDescriptorSetLayout = nullptr;
 	vk::raii::PipelineLayout VulkanPipelineLayout = nullptr;
 	vk::raii::Pipeline       VulkanGraphicsPipeline = nullptr;
 	vk::raii::CommandPool VulkanCommandPool = nullptr;
-	vk::raii::CommandBuffer  VulkanCommandBuffer = nullptr;
-	vk::raii::Semaphore VulkanPresentCompleteSemaphore = nullptr;
-	vk::raii::Semaphore VulkanRenderFinishedSemaphore = nullptr;
+	std::vector < vk::raii::CommandBuffer>  VulkanCommandBuffers;
+	std::vector < vk::raii::Semaphore> VulkanPresentCompleteSemaphores;
+	std::vector < vk::raii::Semaphore> VulkanRenderFinishedSemaphores;
 	vk::raii::Fence     VulkanDrawFence = nullptr;
-	vk::raii::Buffer vertexBuffer = nullptr;
-	vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-	vk::raii::Buffer indexBuffer = nullptr;
-	vk::raii::DeviceMemory indexBufferMemory = nullptr;
+	vk::raii::Buffer VulkanVertexBuffer = nullptr;
+	vk::raii::DeviceMemory VulkanVertexBufferMemory = nullptr;
+	vk::raii::Buffer VulkanIndexBuffer = nullptr;
+	vk::raii::DeviceMemory VulkanIndexBufferMemory = nullptr;
+	std::vector<vk::raii::Buffer> VulkanUniformBuffers;
+	std::vector<vk::raii::DeviceMemory> VulkanUniformBuffersMemory;
+	std::vector<void*> VulkanUniformBuffersMapped;
+	std::vector<vk::raii::Fence>     inFlightFences;
+	uint32_t                         frameIndex = 0;
+	vk::raii::DescriptorPool VulkanDescriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> VulkanDescriptorSets;
 
+	bool framebufferResized = false;
 	std::vector<const char*> VulkanRequiredDeviceExtension = { vk::KHRSwapchainExtensionName };
 };
