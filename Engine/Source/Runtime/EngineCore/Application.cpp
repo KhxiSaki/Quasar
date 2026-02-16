@@ -275,8 +275,8 @@ void Application::CreateImageViews()
 
 void Application::CreateGraphicsPipeline()
 {
-    vk::raii::ShaderModule VertexShaderModule = CreateShaderModule(ReadFile("E:/OrionEngine/Engine/Binaries/Shaders/ShaderType_Vertex.spv"));
-    vk::raii::ShaderModule FragmentShaderModule = CreateShaderModule(ReadFile("E:/OrionEngine/Engine/Binaries/Shaders/ShaderTypes_Fragment.spv"));
+    vk::raii::ShaderModule VertexShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/ShaderType_Vertex.spv"));
+    vk::raii::ShaderModule FragmentShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/ShaderTypes_Fragment.spv"));
 
     vk::PipelineShaderStageCreateInfo VertShaderStageInfo;
     VertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
