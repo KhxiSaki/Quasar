@@ -21,7 +21,8 @@ files {
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.GLFW}/include",
 		"%{IncludeDir.VulkanSDK}",
-		"%{IncludeDir.GLM}"
+		"%{IncludeDir.GLM}",
+		"%{IncludeDir.stb}"
 	}
 
 	links

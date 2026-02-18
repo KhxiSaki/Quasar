@@ -19,29 +19,33 @@ import vulkan_hpp;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <stb_image.h>
+
 struct Vertex
 {
 	glm::vec2 pos;
 	glm::vec3 color;
+	glm::vec2 texCoord;
 
 	static vk::VertexInputBindingDescription getBindingDescription()
 	{
 		return {0, sizeof(Vertex), vk::VertexInputRate::eVertex};
 	}
 
-	static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
+	static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
 	{
 		return {
 			vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, pos)),
-			vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color))};
+			vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
+			vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))};
 	}
 };
 
 const std::vector<Vertex> vertices = {
-	   {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+	   {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
 
 const std::vector<uint16_t> indices = {
 	0, 1, 2, 2, 3, 0
@@ -76,10 +80,17 @@ private:
 	void PickPhysicalDevice();
 	void CreateLogicalDevice();
 	void CreateSwapChain();
+	vk::raii::ImageView CreateImageView(vk::raii::Image& image, vk::Format format);
 	void CreateImageViews();
 	void CreateDescriptorSetLayout();
 	void CreateGraphicsPipeline();
 	void CreateCommandPool();
+	void CreateTextureImage();
+	void CreateImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
+	                 vk::ImageUsageFlags usage,
+	                 vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
+	void CreateTextureImageView();
+	void CreateTextureSampler();
 	void CreateVertexBuffer();
 	void CreateIndexBuffer();
 	void CreateUniformBuffers();
@@ -94,6 +105,7 @@ private:
 	void transition_image_layout(uint32_t imageIndex, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
 	                             vk::AccessFlags2 src_access_mask, vk::AccessFlags2 dst_access_mask,
 	                             vk::PipelineStageFlags2 src_stage_mask, vk::PipelineStageFlags2 dst_stage_mask);
+	void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 
 
 	//helpers function- vulkan
@@ -130,26 +142,9 @@ private:
 
 	void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 	{
-		vk::CommandBufferAllocateInfo allocInfo;
-		allocInfo.commandPool = VulkanCommandPool;
-		allocInfo.level = vk::CommandBufferLevel::ePrimary;
-		allocInfo.commandBufferCount = 1;
-
-		vk::raii::CommandBuffer commandCopyBuffer = std::move(VulkanLogicalDevice.allocateCommandBuffers(allocInfo).front());
-
-		vk::CommandBufferBeginInfo CommandBufferBeginInfo;
-		CommandBufferBeginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-
-		commandCopyBuffer.begin(CommandBufferBeginInfo);
+		vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
 		commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-		commandCopyBuffer.end();
-
-		vk::SubmitInfo SubmitInfo;
-		SubmitInfo.commandBufferCount = 1;
-		SubmitInfo.pCommandBuffers = &*commandCopyBuffer;
-
-		VulkanGraphicsQueue.submit(SubmitInfo, nullptr);
-		VulkanGraphicsQueue.waitIdle();
+		endSingleTimeCommands(commandCopyBuffer);
 	}
 
 	std::vector<char const*> getRequiredExtensions();
@@ -212,6 +207,49 @@ private:
 		app->framebufferResized = true;
 	}
 
+	//Texture
+	vk::raii::CommandBuffer beginSingleTimeCommands()
+	{
+		vk::CommandBufferAllocateInfo allocInfo;
+		allocInfo.commandPool = VulkanCommandPool;
+		allocInfo.level = vk::CommandBufferLevel::ePrimary;
+		allocInfo.commandBufferCount = 1;
+	
+		vk::raii::CommandBuffer commandBuffer = std::move(VulkanLogicalDevice.allocateCommandBuffers(allocInfo).front());
+
+		vk::CommandBufferBeginInfo beginInfo;
+		beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+		commandBuffer.begin(beginInfo);
+
+		return commandBuffer;
+	}
+
+	void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer)
+	{
+		commandBuffer.end();
+
+		vk::SubmitInfo submitInfo;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &*commandBuffer;
+	
+		VulkanGraphicsQueue.submit(submitInfo, nullptr);
+		VulkanGraphicsQueue.waitIdle();
+	}
+
+	void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height) {
+		vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		vk::BufferImageCopy region;
+		region.bufferOffset = 0;
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+		region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+		region.imageOffset = vk::Offset3D{ 0, 0, 0 };
+		region.imageExtent = vk::Extent3D{ width, height, 1 };
+
+		commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
+		endSingleTimeCommands(commandBuffer);
+	}
 protected:
 	bool bIsApplicationRunning = true;
 
@@ -254,4 +292,11 @@ private:
 
 	bool framebufferResized = false;
 	std::vector<const char*> VulkanRequiredDeviceExtension = { vk::KHRSwapchainExtensionName };
+
+	//Texture
+	vk::raii::Image textureImage = nullptr;
+	vk::raii::DeviceMemory textureImageMemory = nullptr;
+	vk::raii::ImageView textureImageView = nullptr;
+	vk::raii::Sampler textureSampler = nullptr;
+
 };

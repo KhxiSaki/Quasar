@@ -1,3 +1,4 @@
+#define STB_IMAGE_IMPLEMENTATION
 #include "Runtime/EngineCore/Application.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
@@ -59,6 +60,9 @@ void Application::InitializeVulkan()
     CreateDescriptorSetLayout();
     CreateGraphicsPipeline();
     CreateCommandPool();
+    CreateTextureImage();
+    CreateTextureImageView();
+    CreateTextureSampler();
     CreateVertexBuffer();
     CreateIndexBuffer();
     CreateUniformBuffers();
@@ -172,6 +176,7 @@ void Application::PickPhysicalDevice()
                 vk::PhysicalDeviceVulkan13Features,
                 vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
             bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters && features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 && 
+                features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
                 features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                 features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
@@ -207,6 +212,9 @@ void Application::CreateLogicalDevice()
     {
         throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
     }
+
+    vk::PhysicalDeviceFeatures2 feature2;
+    feature2.features.samplerAnisotropy = true;
     // query for Vulkan 1.3 features
     vk::PhysicalDeviceVulkan13Features vulkan13Features{};
     vulkan13Features.dynamicRendering = true;
@@ -219,7 +227,7 @@ void Application::CreateLogicalDevice()
     vulkan11Features.shaderDrawParameters = true;
 
     vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain(
-        {},                                   // vk::PhysicalDeviceFeatures2
+        feature2,                                   // vk::PhysicalDeviceFeatures2
         vulkan11Features,                       // vk::PhysicalDeviceVulkan11Features
         vulkan13Features,                     // vk::PhysicalDeviceVulkan13Features
         extendedDynamicStateFeatures          // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
@@ -267,6 +275,17 @@ void Application::CreateSwapChain()
     VulkanSwapChainImages = VulkanSwapChain.getImages();
 }
 
+vk::raii::ImageView Application::CreateImageView(vk::raii::Image& image, vk::Format format)
+{
+    vk::ImageViewCreateInfo viewInfo;
+    viewInfo.image = image;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+
+    return vk::raii::ImageView(VulkanLogicalDevice, viewInfo);
+}
+
 void Application::CreateImageViews()
 {
     assert(VulkanSwapChainImageViews.empty());
@@ -286,11 +305,14 @@ void Application::CreateImageViews()
 void Application::CreateDescriptorSetLayout()
 {
     //Create Uniform Buffer Object Layout Binding
-    vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
-    vk::DescriptorSetLayoutCreateInfo layoutInfo;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
-    
+    std::array bindings = {
+      vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr),
+      vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr)
+    };
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
+
+
 	VulkanDescriptorSetLayout = vk::raii::DescriptorSetLayout(VulkanLogicalDevice, layoutInfo);
 }
 
@@ -397,6 +419,82 @@ void Application::CreateCommandPool()
     VulkanCommandPool = vk::raii::CommandPool(VulkanLogicalDevice, poolInfo);
 }
 
+void Application::CreateTextureImage()
+{
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load("E:/Quasar/Engine/Content/Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels) {
+        throw std::runtime_error("failed to load texture image!");
+    }
+
+    vk::raii::Buffer stagingBuffer({});
+    vk::raii::DeviceMemory stagingBufferMemory({});
+
+    CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+    void* data = stagingBufferMemory.mapMemory(0, imageSize);
+    memcpy(data, pixels, imageSize);
+    stagingBufferMemory.unmapMemory();
+
+    stbi_image_free(pixels);
+
+    CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
+
+    transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+    copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+    transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+}
+
+void Application::CreateImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
+{
+    vk::ImageCreateInfo imageInfo;
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.format = format,
+	imageInfo.extent = vk::Extent3D{ width, height, 1 };
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1,
+	imageInfo.samples = vk::SampleCountFlagBits::e1; 
+	imageInfo.tiling = tiling;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    image = vk::raii::Image(VulkanLogicalDevice, imageInfo);
+
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    imageMemory = vk::raii::DeviceMemory(VulkanLogicalDevice, allocInfo);
+    image.bindMemory(imageMemory, 0);
+}
+
+void Application::CreateTextureImageView()
+{
+    textureImageView = CreateImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+}
+
+void Application::CreateTextureSampler()
+{
+    vk::PhysicalDeviceProperties properties = VulkanPhysicalDevice.getProperties();
+    vk::SamplerCreateInfo samplerInfo;
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.anisotropyEnable = vk::True;
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+    samplerInfo.compareEnable = vk::False;
+
+    textureSampler = vk::raii::Sampler(VulkanLogicalDevice, samplerInfo);
+}
+
 void Application::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
 {
     vk::BufferCreateInfo bufferInfo;
@@ -416,12 +514,11 @@ void Application::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, 
 
 void Application::CreateDescriptorPool()
 {
-    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
-    vk::DescriptorPoolCreateInfo poolInfo;
-    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    std::array poolSize{
+     vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT),
+     vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT)
+    };
+    vk::DescriptorPoolCreateInfo poolInfo(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, MAX_FRAMES_IN_FLIGHT, poolSize);
 
     VulkanDescriptorPool = vk::raii::DescriptorPool(VulkanLogicalDevice, poolInfo);
 }
@@ -444,6 +541,11 @@ void Application::CreateDescriptorSets()
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(UniformBufferObject);
 
+        vk::DescriptorImageInfo imageInfo;
+        imageInfo.sampler = textureSampler;
+        imageInfo.imageView = textureImageView;
+        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
         vk::WriteDescriptorSet descriptorWrite;
         descriptorWrite.dstSet = VulkanDescriptorSets[i];
         descriptorWrite.dstBinding = 0;
@@ -452,7 +554,16 @@ void Application::CreateDescriptorSets()
         descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
         descriptorWrite.pBufferInfo = &bufferInfo;
 
-        VulkanLogicalDevice.updateDescriptorSets(descriptorWrite, {});
+        vk::WriteDescriptorSet descriptorWrite1;
+        descriptorWrite1.dstSet = VulkanDescriptorSets[i];
+        descriptorWrite1.dstBinding = 1;
+        descriptorWrite1.dstArrayElement = 0;
+        descriptorWrite1.descriptorCount = 1;
+        descriptorWrite1.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        descriptorWrite1.pImageInfo = &imageInfo;
+
+        std::array descriptorWrites{ descriptorWrite , descriptorWrite1 };
+        VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
     }
 }
 
@@ -740,6 +851,44 @@ void Application::transition_image_layout(
     );
     VulkanCommandBuffers[frameIndex].pipelineBarrier2(dependency_info);
 }
+
+void Application::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+{
+    auto commandBuffer = beginSingleTimeCommands();
+    vk::ImageMemoryBarrier barrier;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.image = image;
+    barrier.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+
+    vk::PipelineStageFlags sourceStage;
+    vk::PipelineStageFlags destinationStage;
+
+    if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+    {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    }
+    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    }
+    else
+    {
+        throw std::invalid_argument("unsupported layout transition!");
+    }
+    commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+
+	endSingleTimeCommands(commandBuffer);
+}
+
 vk::Extent2D Application::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
 {
     if (capabilities.currentExtent.width != 0xFFFFFFFF)
