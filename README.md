@@ -52,6 +52,151 @@ The steps below take you through cloning your own private fork, then compiling a
 
 1.  After compiling finishes, you can run the editor from Visual Studio by setting your startup project to **Engine** and pressing **F5** to start debugging.
 
+Plugin System (v0.1)
+--------------------
+
+The engine uses a UE5-style runtime plugin system. Plugins are dynamically loaded at runtime from `.plugin` descriptor files.
+
+### Plugin Structure
+
+```
+Engine/Plugins/ (or Game/Plugins/)
+└── YourPlugin/
+    ├── YourPlugin.plugin      # JSON descriptor
+    ├── Source/
+    │   ├── YourPlugin.h
+    │   └── YourPlugin.cpp
+    └── Binaries/              # Output DLLs (auto-generated)
+```
+
+### Creating a Plugin
+
+1. **Create folder** in `Engine/Plugins/` or `Game/Plugins/`
+
+2. **Add descriptor** (`YourPlugin.plugin`):
+```json
+{
+    "Name": "YourPlugin",
+    "Version": "1.0.0",
+    "Description": "My plugin",
+    "Author": "Your Name",
+    "EnabledByDefault": true,
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "YourPlugin",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ]
+}
+```
+
+3. **Add source** with module implementation:
+```cpp
+// YourPlugin.h
+#pragma once
+#include "Runtime/EngineCore/IModule.h"
+
+class YourPlugin : public IModule
+{
+public:
+    void StartupModule() override;
+    void ShutdownModule() override;
+    std::string GetModuleName() const override { return "YourPlugin"; }
+    std::string GetModuleVersion() const override { return "1.0.0"; }
+};
+```
+
+```cpp
+// YourPlugin.cpp
+#include "YourPlugin.h"
+#include <iostream>
+
+void YourPlugin::StartupModule()
+{
+    std::cout << "[YourPlugin] Started!\n";
+}
+
+void YourPlugin::ShutdownModule()
+{
+    std::cout << "[YourPlugin] Shutdown!\n";
+}
+
+DECLARE_MODULE(YourPlugin)
+```
+
+4. **Add premake** (`premake5.lua`):
+```lua
+project "YourPlugin"
+    kind "SharedLib"
+    language "C++"
+    cppdialect "C++23"
+    staticruntime "off"
+
+    targetdir ("Binaries/" .. outputdir .. "/")
+    objdir ("Intermediate/" .. outputdir .. "/")
+
+    files { "Source/**.h", "Source/**.cpp" }
+
+    includedirs { "../../../Engine/Source" }
+    links { "Engine" }
+
+    filter "system:windows"
+        defines { "CAE_PLATFORM_WINDOWS" }
+
+    filter "configurations:Debug"
+        runtime "Debug"
+        symbols "on"
+
+    filter "configurations:Release"
+        runtime "Release"
+        optimize "on"
+```
+
+5. **Include in build** - add to root `premake5.lua`:
+```lua
+group "Plugins"
+include "Engine/Plugins/YourPlugin"
+group ""
+```
+
+6. **Link to Game** - in `Game/premake5.lua`:
+```lua
+links { "Engine", "YourPlugin" }
+dependson { "YourPlugin" }
+```
+
+### Using Plugins
+
+```cpp
+#include "ModuleManager.h"
+
+// Check if loaded
+if (ModuleManager::Get().IsModuleLoaded("YourPlugin"))
+{
+    // Get the module
+    IModule* module = ModuleManager::Get().GetModule("YourPlugin");
+}
+```
+
+For typed access, create interface classes (e.g., `IRendererPlugin`) that plugins implement.
+
+### Loading Phases
+
+Plugins can specify loading phases in their descriptor:
+- `Earliest` - Loaded first
+- `PreDefault` - Before default
+- `Default` - Normal loading
+- `PostDefault` - After default
+- `Late` - Loaded last
+
+### Key Files
+
+- `Engine/Source/Runtime/EngineCore/IModule.h` - Module interface
+- `Engine/Source/Runtime/EngineCore/PluginDescriptor.h` - Descriptor parsing
+- `Engine/Source/Runtime/EngineCore/ModuleManager.h` - Plugin loading management
+
 Licensing
 ---------
 

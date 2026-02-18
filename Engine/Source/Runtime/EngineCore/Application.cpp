@@ -36,10 +36,17 @@ Application::~Application()
 
 void Application::Run()
 {
+    LoadPlugins();
     InitializeWindow();
     InitializeVulkan();
     MainLoop();
     Cleanup();
+}
+
+void Application::LoadPlugins()
+{
+    ModuleManager::Get().LoadPluginsFromDirectory("../Engine/Plugins");
+    ModuleManager::Get().LoadPluginsFromDirectory("../Game/Plugins");
 }
 
 void Application::InitializeWindow()

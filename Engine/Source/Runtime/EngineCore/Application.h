@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <fstream>
 
+#include "ModuleManager.h"
+
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
@@ -313,6 +315,7 @@ private:
 		return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
 	}
 protected:
+	void LoadPlugins();
 	bool bIsApplicationRunning = true;
 
 private:

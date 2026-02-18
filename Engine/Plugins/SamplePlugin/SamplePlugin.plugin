@@ -1,0 +1,16 @@
+{
+    "Name": "SamplePlugin",
+    "Version": "1.0.0",
+    "Description": "A sample plugin demonstrating the UE5-style plugin system",
+    "Author": "Quasar Team",
+    "EnabledByDefault": true,
+    "IsBeta": false,
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "SamplePlugin",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ]
+}

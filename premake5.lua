@@ -35,6 +35,7 @@ end
 
 group "Engine"
 include "Engine"
+include "Engine/Plugins/SamplePlugin"
 group ""
 
 group "Game"

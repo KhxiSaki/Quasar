@@ -1,3 +1,5 @@
+require "path"
+
 project "Engine"
 	kind "StaticLib"
 	language "C++"
@@ -8,32 +10,34 @@ project "Engine"
 	objdir ("Intermediate/" .. outputdir .. "/")
 
 files
-	{
-		"Source/**.h",
-		"Source/**.cpp"
-	}
-	
+  {
+ 		"Source/**.h",
+ 		"Source/**.cpp"
+ 	}
+ 	
 includedirs
-	{
-		"Source",
-		"%{IncludeDir.GLFW}",
-		"%{IncludeDir.GLFW}/include",
-		"%{IncludeDir.ImGui}",
-		"%{IncludeDir.ImGui}/backends",
-		"%{IncludeDir.VulkanSDK}",
-		"%{IncludeDir.GLM}",
-		"%{IncludeDir.VMA}",
-		"%{IncludeDir.VMA}/include",
-		"%{IncludeDir.stb}",
-"%{IncludeDir.tinyobjloader}"
-	}
-	
-	links
-	{
-		"ImGui",
-		"GLFW",
-		"vulkan-1"
-	}
+ 	{
+ 		"Source",
+ 		"%{IncludeDir.GLFW}",
+ 		"%{IncludeDir.GLFW}/include",
+ 		"%{IncludeDir.ImGui}",
+ 		"%{IncludeDir.ImGui}/backends",
+ 		"%{IncludeDir.VulkanSDK}",
+ 		"%{IncludeDir.GLM}",
+ 		"%{IncludeDir.VMA}",
+ 		"%{IncludeDir.VMA}/include",
+ 		"%{IncludeDir.stb}",
+		"%{IncludeDir.tinyobjloader}"
+ 	}
+ 	
+links
+ 	{
+ 		"ImGui",
+ 		"GLFW",
+ 		"vulkan-1"
+ 	}
+
+dependson { "SamplePlugin" }
 
 	-- Add Vulkan library directory
 	filter {"system:windows", "configurations:*"}

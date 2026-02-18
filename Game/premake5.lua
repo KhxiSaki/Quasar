@@ -9,13 +9,17 @@ project "Game"
 
 files { 
 		"Source/**.h", 
-		"Source/**.cpp"
+		"Source/**.cpp",
+"Plugins/**.h", 
+		"Plugins/**.cpp"
 	}
 
 	includedirs
 	{
 		"Source",
+"Plugins",
 		"../Engine/Source",
+"../Engine/Plugins",
 		"../Engine/ThirdParty/ImGui",
 		"../Engine/ThirdParty/ImGui/backends",
 		"%{IncludeDir.GLFW}",
@@ -31,6 +35,8 @@ files {
 		"Engine",
 		"ImGui"
 	}
+
+	dependson { "SamplePlugin" }
 
 	filter "system:windows"
 		systemversion "latest"
