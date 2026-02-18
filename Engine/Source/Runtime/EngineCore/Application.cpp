@@ -1,6 +1,5 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "Runtime/EngineCore/Application.h"
-#include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 
 //TODO: Will probably move this to a window class in the future
@@ -60,6 +59,7 @@ void Application::InitializeVulkan()
     CreateDescriptorSetLayout();
     CreateGraphicsPipeline();
     CreateCommandPool();
+    CreateDepthResources();
     CreateTextureImage();
     CreateTextureImageView();
     CreateTextureSampler();
@@ -275,13 +275,13 @@ void Application::CreateSwapChain()
     VulkanSwapChainImages = VulkanSwapChain.getImages();
 }
 
-vk::raii::ImageView Application::CreateImageView(vk::raii::Image& image, vk::Format format)
+vk::raii::ImageView Application::CreateImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
 {
     vk::ImageViewCreateInfo viewInfo;
     viewInfo.image = image;
     viewInfo.viewType = vk::ImageViewType::e2D;
     viewInfo.format = format;
-    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+    viewInfo.subresourceRange = { aspectFlags, 0, 1, 0, 1 };
 
     return vk::raii::ImageView(VulkanLogicalDevice, viewInfo);
 }
@@ -365,6 +365,13 @@ void Application::CreateGraphicsPipeline()
     multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
     multisampling.sampleShadingEnable = vk::False;
 
+    vk::PipelineDepthStencilStateCreateInfo depthStencil;
+    depthStencil.depthTestEnable = vk::True;
+    depthStencil.depthWriteEnable = vk::True;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = vk::False;
+    depthStencil.stencilTestEnable = vk::False;
+
     vk::PipelineColorBlendAttachmentState colorBlendAttachment;
     colorBlendAttachment.blendEnable = vk::False;
     colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
@@ -389,9 +396,12 @@ void Application::CreateGraphicsPipeline()
 
     VulkanPipelineLayout = vk::raii::PipelineLayout(VulkanLogicalDevice, pipelineLayoutInfo);
 
+    vk::Format depthFormat = findDepthFormat();
+
 	vk::PipelineRenderingCreateInfo PipelineRenderingCreateInfo;
     PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     PipelineRenderingCreateInfo.pColorAttachmentFormats = &VulkanSwapChainSurfaceFormat.format;
+    PipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
 
     vk::GraphicsPipelineCreateInfo GraphicPipelineCreateInfo;
     GraphicPipelineCreateInfo.stageCount = 2;
@@ -406,6 +416,7 @@ void Application::CreateGraphicsPipeline()
     GraphicPipelineCreateInfo.layout = VulkanPipelineLayout;
     GraphicPipelineCreateInfo.renderPass = nullptr; // if we pass something, we dont use dynamic rendering and we have to use traditional renderpass rendering
     GraphicPipelineCreateInfo.pNext = &PipelineRenderingCreateInfo; // Link the pipeline rendering info
+    GraphicPipelineCreateInfo.pDepthStencilState = &depthStencil;
 
     VulkanGraphicsPipeline = vk::raii::Pipeline(VulkanLogicalDevice, nullptr, GraphicPipelineCreateInfo);
 }
@@ -417,6 +428,13 @@ void Application::CreateCommandPool()
     poolInfo.queueFamilyIndex = queueIndex;
     
     VulkanCommandPool = vk::raii::CommandPool(VulkanLogicalDevice, poolInfo);
+}
+
+void Application::CreateDepthResources()
+{
+    vk::Format depthFormat = findDepthFormat();
+    CreateImage(VulkanSwapChainExtent.width, VulkanSwapChainExtent.height, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
+    depthImageView = CreateImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 }
 
 void Application::CreateTextureImage()
@@ -474,7 +492,7 @@ void Application::CreateImage(uint32_t width, uint32_t height, vk::Format format
 
 void Application::CreateTextureImageView()
 {
-    textureImageView = CreateImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+    textureImageView = CreateImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
 }
 
 void Application::CreateTextureSampler()
@@ -768,16 +786,39 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
         {},                                                        // srcAccessMask (no need to wait for previous operations)
         vk::AccessFlagBits2::eColorAttachmentWrite,                // dstAccessMask
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // srcStage
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput         // dstStage
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,         // dstStage
+        vk::ImageAspectFlagBits::eColor
     );
-    vk::ClearValue              clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // Transition depth image to depth attachment optimal layout
+    transition_image_layout(
+        imageIndex,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eDepthAttachmentOptimal,
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+        vk::ImageAspectFlagBits::eDepth);
+
+    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    //  in Vulkan, where 1.0 lies at the far view plane and 0.0 at the near view plane. 
+    //  The initial value at each point in the depth buffer should be the furthest possible depth, which is 1.0
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 
     vk::RenderingAttachmentInfo attachmentInfo;
     attachmentInfo.imageView = VulkanSwapChainImageViews[imageIndex];
     attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-        attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
-        attachmentInfo.clearValue = clearColor;
+	attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
+	attachmentInfo.clearValue = clearColor;
+
+    vk::RenderingAttachmentInfo depthAttachmentInfo;
+    depthAttachmentInfo.imageView = depthImageView;
+    depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
+    depthAttachmentInfo.clearValue = clearDepth;
 
     vk::RenderingInfo renderingInfo(
         vk::RenderingInfo{}
@@ -785,6 +826,7 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
         .setLayerCount(1)
         .setColorAttachmentCount(1)
         .setPColorAttachments(&attachmentInfo)
+        .setPDepthAttachment(&depthAttachmentInfo)
     );
 
     commandBuffer.beginRendering(renderingInfo);
@@ -810,8 +852,9 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
         vk::AccessFlagBits2::eColorAttachmentWrite,                // srcAccessMask
         {},                                                        // dstAccessMask
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // srcStage
-        vk::PipelineStageFlagBits2::eBottomOfPipe                  // dstStage
-    );
+        vk::PipelineStageFlagBits2::eBottomOfPipe,                 // dstStage
+        vk::ImageAspectFlagBits::eColor);
+
     commandBuffer.end();
 }
 
@@ -822,7 +865,8 @@ void Application::transition_image_layout(
     vk::AccessFlags2        src_access_mask,
     vk::AccessFlags2        dst_access_mask,
     vk::PipelineStageFlags2 src_stage_mask,
-    vk::PipelineStageFlags2 dst_stage_mask)
+    vk::PipelineStageFlags2 dst_stage_mask,
+    vk::ImageAspectFlags    image_aspect_flags)
 {
     vk::ImageMemoryBarrier2 barrier(
         vk::ImageMemoryBarrier2{}
@@ -836,7 +880,7 @@ void Application::transition_image_layout(
         .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
         .setImage(VulkanSwapChainImages[imageIndex])
         .setSubresourceRange({
-            vk::ImageAspectFlagBits::eColor,
+            image_aspect_flags,
             0, // baseMipLevel
             1, // levelCount
             0, // baseArrayLayer
@@ -933,6 +977,7 @@ void Application::RecreateSwapChain()
     CleanupSwapChain();
     CreateSwapChain();
     CreateImageViews();
+    CreateDepthResources();
 }
 
 void Application::Cleanup()
