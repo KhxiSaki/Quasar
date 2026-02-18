@@ -25,6 +25,7 @@ includedirs
 		"%{IncludeDir.VMA}",
 		"%{IncludeDir.VMA}/include",
 		"%{IncludeDir.stb}",
+"%{IncludeDir.tinyobjloader}"
 	}
 	
 	links

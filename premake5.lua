@@ -23,6 +23,7 @@ IncludeDir["GLM"] = "%{wks.location}/Engine/ThirdParty/GLM"
 IncludeDir["ImGui"] = "%{wks.location}/Engine/ThirdParty/ImGui"
 IncludeDir["VMA"] = "%{wks.location}/Engine/ThirdParty/VulkanMemoryAllocator"
 IncludeDir["stb"] = "%{wks.location}/Engine/ThirdParty/stb"
+IncludeDir["tinyobjloader"] = "%{wks.location}/Engine/ThirdParty/tinyobjloader"
 
 VulkanSDK = {}
 VulkanSDK.LibraryDir = "C:/VulkanSDK/1.4.335.0/Lib"

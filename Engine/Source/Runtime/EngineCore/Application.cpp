@@ -1,10 +1,17 @@
 #define STB_IMAGE_IMPLEMENTATION
+#define TINYOBJLOADER_IMPLEMENTATION
+
 #include "Runtime/EngineCore/Application.h"
 #include <chrono>
+
 
 //TODO: Will probably move this to a window class in the future
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
+
+//TODO: File system and ecs load objedct and set the filepath
+const std::string MODEL_PATH = "E:/Quasar/Engine/Content/Models/viking_room.obj";
+const std::string TEXTURE_PATH = "E:/Quasar/Engine/Content/Textures/viking_room.png";
 
 //TODO: Will move to vulkan specific RHI types
 const std::vector<char const*> validationLayers = {
@@ -63,6 +70,7 @@ void Application::InitializeVulkan()
     CreateTextureImage();
     CreateTextureImageView();
     CreateTextureSampler();
+    LoadModel();
     CreateVertexBuffer();
     CreateIndexBuffer();
     CreateUniformBuffers();
@@ -438,7 +446,7 @@ void Application::CreateDepthResources()
 void Application::CreateTextureImage()
 {
     int texWidth, texHeight, texChannels;
-    stbi_uc* pixels = stbi_load("E:/Quasar/Engine/Content/Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
@@ -511,6 +519,42 @@ void Application::CreateTextureSampler()
     samplerInfo.compareOp = vk::CompareOp::eAlways;
 
     textureSampler = vk::raii::Sampler(VulkanLogicalDevice, samplerInfo);
+}
+
+void Application::LoadModel()
+{
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, MODEL_PATH.c_str())) {
+        throw std::runtime_error(err);
+    }
+
+    for (const auto& shape : shapes)
+    {
+        for (const auto& index : shape.mesh.indices)
+        {
+            Vertex vertex{};
+
+            vertex.pos = {
+    attrib.vertices[3 * index.vertex_index + 0],
+    attrib.vertices[3 * index.vertex_index + 1],
+    attrib.vertices[3 * index.vertex_index + 2]
+            };
+
+            vertex.texCoord = {
+                attrib.texcoords[2 * index.texcoord_index + 0],
+                1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+            };
+
+            vertex.color = { 1.0f, 1.0f, 1.0f };
+
+            vertices.push_back(vertex);
+            indices.push_back(indices.size());
+        }
+    }
 }
 
 void Application::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
@@ -815,7 +859,7 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
     commandBuffer.bindVertexBuffers(0, *VulkanVertexBuffer, { 0 });
-    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint16);
+    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint32);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, VulkanPipelineLayout, 0, *VulkanDescriptorSets[frameIndex], nullptr);
     commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
     commandBuffer.endRendering();

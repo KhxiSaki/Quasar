@@ -22,7 +22,8 @@ files {
 		"%{IncludeDir.GLFW}/include",
 		"%{IncludeDir.VulkanSDK}",
 		"%{IncludeDir.GLM}",
-		"%{IncludeDir.stb}"
+		"%{IncludeDir.stb}",
+"%{IncludeDir.tinyobjloader}"
 	}
 
 	links

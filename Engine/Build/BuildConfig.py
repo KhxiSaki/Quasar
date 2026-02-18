@@ -65,5 +65,12 @@ Dependency(
         url="https://github.com/nothings/stb/archive/refs/heads/master.zip",
         install_path=f"{THIRD_PARTY_DIR}/stb",
         extracted_folder="stb-master"
+    ),
+Dependency(
+        name="tinyobjloader",
+        version="1.0.6",
+        url="https://github.com/tinyobjloader/tinyobjloader/archive/refs/tags/v1.0.6.zip",
+        install_path=f"{THIRD_PARTY_DIR}/tinyobjloader",
+        extracted_folder="tinyobjloader"
     )
 ]

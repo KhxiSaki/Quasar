@@ -41,6 +41,7 @@ Engine/ThirdParty/GLM/
 Engine/ThirdParty/ImGUI/
 Engine/ThirdParty/VulkanMemoryAllocator/
 Engine/ThirdParty/stb/
+Engine/ThirdParty/tinyobjloader/
 
 # -----------------------------------------------------------------------------
 # Vulkan SDK Installer (if downloaded locally)
