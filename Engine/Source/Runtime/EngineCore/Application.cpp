@@ -532,6 +532,8 @@ void Application::LoadModel()
         throw std::runtime_error(err);
     }
 
+    std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
     for (const auto& shape : shapes)
     {
         for (const auto& index : shape.mesh.indices)
@@ -539,9 +541,9 @@ void Application::LoadModel()
             Vertex vertex{};
 
             vertex.pos = {
-    attrib.vertices[3 * index.vertex_index + 0],
-    attrib.vertices[3 * index.vertex_index + 1],
-    attrib.vertices[3 * index.vertex_index + 2]
+                 attrib.vertices[3 * index.vertex_index + 0],
+            	attrib.vertices[3 * index.vertex_index + 1],
+            	attrib.vertices[3 * index.vertex_index + 2]
             };
 
             vertex.texCoord = {
@@ -551,10 +553,17 @@ void Application::LoadModel()
 
             vertex.color = { 1.0f, 1.0f, 1.0f };
 
-            vertices.push_back(vertex);
-            indices.push_back(indices.size());
+            if (!uniqueVertices.contains(vertex))
+            {
+                uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+                vertices.push_back(vertex);
+            }
+
+            indices.push_back(uniqueVertices[vertex]);
         }
     }
+
+
 }
 
 void Application::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
