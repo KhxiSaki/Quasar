@@ -312,7 +312,6 @@ void Application::CreateDescriptorSetLayout()
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
 
-
 	VulkanDescriptorSetLayout = vk::raii::DescriptorSetLayout(VulkanLogicalDevice, layoutInfo);
 }
 
@@ -345,6 +344,7 @@ void Application::CreateGraphicsPipeline()
 
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
     inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.primitiveRestartEnable = vk::False;
 
     vk::PipelineViewportStateCreateInfo viewportState;
     viewportState.viewportCount = 1;
@@ -357,9 +357,7 @@ void Application::CreateGraphicsPipeline()
     rasterizer.cullMode = vk::CullModeFlagBits::eBack;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = vk::False;
-    rasterizer.depthBiasSlopeFactor = 1.0f;
     rasterizer.lineWidth = 1.0f;
-
 
     vk::PipelineMultisampleStateCreateInfo multisampling;
     multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
@@ -478,6 +476,7 @@ void Application::CreateImage(uint32_t width, uint32_t height, vk::Format format
 	imageInfo.tiling = tiling;
     imageInfo.usage = usage;
     imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
 
     image = vk::raii::Image(VulkanLogicalDevice, imageInfo);
 
@@ -509,6 +508,7 @@ void Application::CreateTextureSampler()
     samplerInfo.anisotropyEnable = vk::True;
     samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
     samplerInfo.compareEnable = vk::False;
+    samplerInfo.compareOp = vk::CompareOp::eAlways;
 
     textureSampler = vk::raii::Sampler(VulkanLogicalDevice, samplerInfo);
 }
@@ -521,6 +521,7 @@ void Application::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, 
     bufferInfo.sharingMode = vk::SharingMode::eExclusive;
 
     buffer = vk::raii::Buffer(VulkanLogicalDevice, bufferInfo);
+
     vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
     vk::MemoryAllocateInfo allocInfo;
     allocInfo.allocationSize = memRequirements.size;
@@ -536,7 +537,11 @@ void Application::CreateDescriptorPool()
      vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT),
      vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT)
     };
-    vk::DescriptorPoolCreateInfo poolInfo(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, MAX_FRAMES_IN_FLIGHT, poolSize);
+    vk::DescriptorPoolCreateInfo poolInfo;
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size());
+    poolInfo.pPoolSizes = poolSize.data();
 
     VulkanDescriptorPool = vk::raii::DescriptorPool(VulkanLogicalDevice, poolInfo);
 }
@@ -563,68 +568,42 @@ void Application::CreateDescriptorSets()
         imageInfo.sampler = textureSampler;
         imageInfo.imageView = textureImageView;
         imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        
+        vk::WriteDescriptorSet bufferdescriptorWrite;
+        bufferdescriptorWrite.dstSet = VulkanDescriptorSets[i];
+        bufferdescriptorWrite.dstBinding = 0;
+        bufferdescriptorWrite.dstArrayElement = 0;
+        bufferdescriptorWrite.descriptorCount = 1;
+        bufferdescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+        bufferdescriptorWrite.pBufferInfo = &bufferInfo;
 
-        vk::WriteDescriptorSet descriptorWrite;
-        descriptorWrite.dstSet = VulkanDescriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrite.pBufferInfo = &bufferInfo;
-
-        vk::WriteDescriptorSet descriptorWrite1;
-        descriptorWrite1.dstSet = VulkanDescriptorSets[i];
-        descriptorWrite1.dstBinding = 1;
-        descriptorWrite1.dstArrayElement = 0;
-        descriptorWrite1.descriptorCount = 1;
-        descriptorWrite1.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        descriptorWrite1.pImageInfo = &imageInfo;
-
-        std::array descriptorWrites{ descriptorWrite , descriptorWrite1 };
+        vk::WriteDescriptorSet imageinfodescriptorWrite;
+        imageinfodescriptorWrite.dstSet = VulkanDescriptorSets[i];
+        imageinfodescriptorWrite.dstBinding = 1;
+        imageinfodescriptorWrite.dstArrayElement = 0;
+        imageinfodescriptorWrite.descriptorCount = 1;
+        imageinfodescriptorWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        imageinfodescriptorWrite.pImageInfo = &imageInfo;
+        
+        std::array descriptorWrites{ bufferdescriptorWrite , imageinfodescriptorWrite };
         VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
     }
 }
 
 void Application::CreateVertexBuffer()
 {
-    vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    vk::DeviceSize         bufferSize = sizeof(vertices[0]) * vertices.size();
+    vk::raii::Buffer       stagingBuffer({});
+    vk::raii::DeviceMemory stagingBufferMemory({});
+    CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
 
-    //Staging buffer
-    vk::BufferCreateInfo stagingInfo;
-    stagingInfo.size = bufferSize;
-    stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
-    stagingInfo.sharingMode = vk::SharingMode::eExclusive;
-
-    vk::raii::Buffer stagingBuffer(VulkanLogicalDevice, stagingInfo);
-    vk::MemoryRequirements memRequirementsStaging = stagingBuffer.getMemoryRequirements();
-    vk::MemoryAllocateInfo memoryAllocateInfoStaging;
-    memoryAllocateInfoStaging.allocationSize = memRequirementsStaging.size;
-    memoryAllocateInfoStaging.memoryTypeIndex = findMemoryType(memRequirementsStaging.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-
-    vk::raii::DeviceMemory stagingBufferMemory(VulkanLogicalDevice, memoryAllocateInfoStaging);
-
-    stagingBuffer.bindMemory(stagingBufferMemory, 0);
-    void* dataStaging = stagingBufferMemory.mapMemory(0, stagingInfo.size);
-    memcpy(dataStaging, vertices.data(), stagingInfo.size);
+    void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(dataStaging, vertices.data(), bufferSize);
     stagingBufferMemory.unmapMemory();
 
-    vk::BufferCreateInfo bufferInfo;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
-    bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+    CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, VulkanVertexBuffer, VulkanVertexBufferMemory);
 
-    VulkanVertexBuffer = vk::raii::Buffer(VulkanLogicalDevice, bufferInfo);
-
-    vk::MemoryRequirements memRequirements = VulkanVertexBuffer.getMemoryRequirements();
-    vk::MemoryAllocateInfo memoryAllocateInfo;
-    memoryAllocateInfo.allocationSize = memRequirements.size;
-    memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-    VulkanVertexBufferMemory = vk::raii::DeviceMemory(VulkanLogicalDevice, memoryAllocateInfo);
-
-    VulkanVertexBuffer.bindMemory(*VulkanVertexBufferMemory, 0);
-
-    copyBuffer(stagingBuffer, VulkanVertexBuffer, stagingInfo.size);
+    copyBuffer(stagingBuffer, VulkanVertexBuffer, bufferSize);
 }
 
 void Application::CreateIndexBuffer()
@@ -675,8 +654,7 @@ void Application::CreateCommandBuffers()
 
 void Application::CreateSyncObjects()
 {
-    vk::FenceCreateInfo FenceCreateInfo;
-    FenceCreateInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+    assert(VulkanPresentCompleteSemaphores.empty() && VulkanRenderFinishedSemaphores.empty() && inFlightFences.empty());
 
     for (size_t i = 0; i < VulkanSwapChainImages.size(); i++)
     {
@@ -685,6 +663,9 @@ void Application::CreateSyncObjects()
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
+        vk::FenceCreateInfo FenceCreateInfo;
+        FenceCreateInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+
         VulkanPresentCompleteSemaphores.emplace_back(VulkanLogicalDevice, vk::SemaphoreCreateInfo());
         inFlightFences.emplace_back(VulkanLogicalDevice, FenceCreateInfo);
     }
@@ -749,14 +730,15 @@ void Application::drawFrame()
     submitInfo.pCommandBuffers = &*VulkanCommandBuffers[frameIndex];
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &*VulkanRenderFinishedSemaphores[imageIndex];
+
     VulkanGraphicsQueue.submit(submitInfo, *inFlightFences[frameIndex]);
 
 	vk::PresentInfoKHR presentInfoKHR;
-    presentInfoKHR.waitSemaphoreCount = 1,
-        presentInfoKHR.pWaitSemaphores = &*VulkanRenderFinishedSemaphores[imageIndex],
-        presentInfoKHR.swapchainCount = 1,
-        presentInfoKHR.pSwapchains = &*VulkanSwapChain,
-        presentInfoKHR.pImageIndices = &imageIndex;
+    presentInfoKHR.waitSemaphoreCount = 1;
+    presentInfoKHR.pWaitSemaphores = &*VulkanRenderFinishedSemaphores[imageIndex];
+    presentInfoKHR.swapchainCount = 1;
+    presentInfoKHR.pSwapchains = &*VulkanSwapChain;
+    presentInfoKHR.pImageIndices = &imageIndex;
 
     result = VulkanGraphicsQueue.presentKHR(presentInfoKHR);
     // Due to VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS being defined, eErrorOutOfDateKHR can be checked as a result
@@ -780,19 +762,17 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.begin({});
     // Before starting rendering, transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL
     transition_image_layout(
-        imageIndex,
+        VulkanSwapChainImages[imageIndex],
         vk::ImageLayout::eUndefined,
         vk::ImageLayout::eColorAttachmentOptimal,
         {},                                                        // srcAccessMask (no need to wait for previous operations)
         vk::AccessFlagBits2::eColorAttachmentWrite,                // dstAccessMask
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // srcStage
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,         // dstStage
-        vk::ImageAspectFlagBits::eColor
-    );
-
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // dstStage
+        vk::ImageAspectFlagBits::eColor);
     // Transition depth image to depth attachment optimal layout
     transition_image_layout(
-        imageIndex,
+        *depthImage,
         vk::ImageLayout::eUndefined,
         vk::ImageLayout::eDepthAttachmentOptimal,
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -802,51 +782,46 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
         vk::ImageAspectFlagBits::eDepth);
 
     vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    //  in Vulkan, where 1.0 lies at the far view plane and 0.0 at the near view plane. 
-    //  The initial value at each point in the depth buffer should be the furthest possible depth, which is 1.0
     vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 
-    vk::RenderingAttachmentInfo attachmentInfo;
-    attachmentInfo.imageView = VulkanSwapChainImageViews[imageIndex];
-    attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-	attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
-	attachmentInfo.clearValue = clearColor;
+    vk::RenderingAttachmentInfo colorAttachmentInfo;
+    colorAttachmentInfo.setImageView(VulkanSwapChainImageViews[imageIndex]);
+    colorAttachmentInfo.setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
+    colorAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
+    colorAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eStore);
+    colorAttachmentInfo.setClearValue(clearColor);
 
     vk::RenderingAttachmentInfo depthAttachmentInfo;
-    depthAttachmentInfo.imageView = depthImageView;
-    depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-    depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-    depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
-    depthAttachmentInfo.clearValue = clearDepth;
+    depthAttachmentInfo.setImageView(depthImageView);
+    depthAttachmentInfo.setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal);
+    depthAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
+    depthAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eDontCare);
+    depthAttachmentInfo.setClearValue(clearDepth);
 
-    vk::RenderingInfo renderingInfo(
-        vk::RenderingInfo{}
-        .setRenderArea(vk::Rect2D({0, 0}, VulkanSwapChainExtent))
-        .setLayerCount(1)
-        .setColorAttachmentCount(1)
-        .setPColorAttachments(&attachmentInfo)
-        .setPDepthAttachment(&depthAttachmentInfo)
-    );
+    vk::RenderingInfo renderingInfo;
+
+    vk::Rect2D rect2d;
+    rect2d.offset = vk::Offset2D{ 0, 0 };
+    rect2d.extent = VulkanSwapChainExtent;
+
+    renderingInfo.renderArea = rect2d;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachmentInfo;
+    renderingInfo.pDepthAttachment = &depthAttachmentInfo;
 
     commandBuffer.beginRendering(renderingInfo);
-    
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *VulkanGraphicsPipeline);
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
-
     commandBuffer.bindVertexBuffers(0, *VulkanVertexBuffer, { 0 });
-    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
-
+    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint16);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, VulkanPipelineLayout, 0, *VulkanDescriptorSets[frameIndex], nullptr);
-
     commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
-
     commandBuffer.endRendering();
-
     // After rendering, transition the swapchain image to PRESENT_SRC
     transition_image_layout(
-        imageIndex,
+        VulkanSwapChainImages[imageIndex],
         vk::ImageLayout::eColorAttachmentOptimal,
         vk::ImageLayout::ePresentSrcKHR,
         vk::AccessFlagBits2::eColorAttachmentWrite,                // srcAccessMask
@@ -854,12 +829,11 @@ void Application::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // srcStage
         vk::PipelineStageFlagBits2::eBottomOfPipe,                 // dstStage
         vk::ImageAspectFlagBits::eColor);
-
     commandBuffer.end();
 }
 
 void Application::transition_image_layout(
-    uint32_t                imageIndex,
+    vk::Image               image,
     vk::ImageLayout         old_layout,
     vk::ImageLayout         new_layout,
     vk::AccessFlags2        src_access_mask,
@@ -868,31 +842,28 @@ void Application::transition_image_layout(
     vk::PipelineStageFlags2 dst_stage_mask,
     vk::ImageAspectFlags    image_aspect_flags)
 {
-    vk::ImageMemoryBarrier2 barrier(
-        vk::ImageMemoryBarrier2{}
-        .setSrcStageMask(src_stage_mask)
-        .setSrcAccessMask(src_access_mask)
-        .setDstStageMask(dst_stage_mask)
-        .setDstAccessMask(dst_access_mask)
-        .setOldLayout(old_layout)
-        .setNewLayout(new_layout)
-        .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-        .setImage(VulkanSwapChainImages[imageIndex])
-        .setSubresourceRange({
-            image_aspect_flags,
-            0, // baseMipLevel
-            1, // levelCount
-            0, // baseArrayLayer
-            1  // layerCount
-        })
-    );
-    vk::DependencyInfo dependency_info(
-        vk::DependencyInfo{}
-        .setDependencyFlags({})
-        .setImageMemoryBarrierCount(1)
-        .setPImageMemoryBarriers(&barrier)
-    );
+    vk::ImageMemoryBarrier2 barrier;
+    barrier.srcStageMask = src_stage_mask;
+    barrier.srcAccessMask = src_access_mask;
+    barrier.dstStageMask = dst_stage_mask;
+    barrier.dstAccessMask = dst_access_mask;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {
+                image_aspect_flags,
+                 0,
+                1,
+                0,
+                1 };
+
+    vk::DependencyInfo dependency_info;
+    dependency_info.dependencyFlags = {};
+    dependency_info.imageMemoryBarrierCount = 1;
+    dependency_info.pImageMemoryBarriers = &barrier;
+
     VulkanCommandBuffers[frameIndex].pipelineBarrier2(dependency_info);
 }
 

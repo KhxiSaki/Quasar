@@ -110,7 +110,7 @@ private:
 	void CreateSyncObjects();
 	void drawFrame();
 	void recordCommandBuffer(uint32_t imageIndex);
-	void transition_image_layout(uint32_t imageIndex, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+	void transition_image_layout(vk::Image               image, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
 	                             vk::AccessFlags2 src_access_mask, vk::AccessFlags2 dst_access_mask,
 	                             vk::PipelineStageFlags2 src_stage_mask, vk::PipelineStageFlags2 dst_stage_mask, vk::ImageAspectFlags    image_aspect_flags);
 	void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
@@ -150,9 +150,30 @@ private:
 
 	void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 	{
-		vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
-		commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-		endSingleTimeCommands(commandCopyBuffer);
+		vk::CommandBufferAllocateInfo allocInfo;
+		allocInfo.commandPool = VulkanCommandPool;
+		allocInfo.level = vk::CommandBufferLevel::ePrimary;
+		allocInfo.commandBufferCount = 1;
+
+		vk::raii::CommandBuffer       commandCopyBuffer = std::move(VulkanLogicalDevice.allocateCommandBuffers(allocInfo).front());
+
+		vk::CommandBufferBeginInfo CommandBufferBeginInfo;
+		CommandBufferBeginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+		commandCopyBuffer.begin(CommandBufferBeginInfo);
+
+		vk::BufferCopy copybuffer;
+		copybuffer.size = size;
+
+		commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, copybuffer);
+		commandCopyBuffer.end();
+
+		vk::SubmitInfo SubmitInfo;
+		SubmitInfo.commandBufferCount = 1;
+		SubmitInfo.pCommandBuffers = &*commandCopyBuffer;
+
+		VulkanGraphicsQueue.submit(SubmitInfo, nullptr);
+		VulkanGraphicsQueue.waitIdle();
 	}
 
 	std::vector<char const*> getRequiredExtensions();
@@ -227,6 +248,7 @@ private:
 
 		vk::CommandBufferBeginInfo beginInfo;
 		beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+		
 		commandBuffer.begin(beginInfo);
 
 		return commandBuffer;
@@ -328,7 +350,9 @@ private:
 	std::vector<vk::raii::DescriptorSet> VulkanDescriptorSets;
 
 	bool framebufferResized = false;
-	std::vector<const char*> VulkanRequiredDeviceExtension = { vk::KHRSwapchainExtensionName };
+	std::vector<const char*> VulkanRequiredDeviceExtension = { vk::KHRSwapchainExtensionName,
+		vk::KHRSpirv14ExtensionName,
+		vk::KHRSynchronization2ExtensionName };
 
 	vk::raii::Image depthImage = nullptr;
 	vk::raii::DeviceMemory depthImageMemory = nullptr;
