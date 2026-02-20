@@ -14,7 +14,7 @@ public:
     void Shutdown();
 
     virtual void OnUpdate(float deltaTime) {}
-    virtual void OnRender() {}
+    virtual void OnRender(float deltaTime) {}
 
     bool IsRunning() const { return bIsRunning; }
     void Stop() { bIsRunning = false; }

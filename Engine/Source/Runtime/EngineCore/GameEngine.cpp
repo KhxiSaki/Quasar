@@ -34,7 +34,7 @@ void GameEngine::MainLoop()
         
         m_Renderer->Render();
         
-        OnRender();
+        OnRender(m_Window->deltaTime);
     }
     m_Renderer->GetDevice().waitIdle();
 }
