@@ -11,8 +11,8 @@
 
 
 //TODO: File system and ecs load objedct and set the filepath
-const std::string MODEL_PATH = "C:/Quasar/Engine/Content/Models/viking_room.obj";
-const std::string TEXTURE_PATH = "C:/Quasar/Engine/Content/Textures/viking_room.png";
+const std::string MODEL_PATH = "../Engine/Content/Models/viking_room.obj";
+const std::string TEXTURE_PATH = "../Engine/Content/Textures/viking_room.png";
 
 //TODO: Will move to vulkan specific RHI types
 const std::vector<char const*> validationLayers = {
