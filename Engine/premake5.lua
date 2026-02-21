@@ -46,9 +46,10 @@ filter "system:windows"
 		systemversion "latest"
 
 defines
-		{
-			"CAE_PLATFORM_WINDOWS"
-		}
+	{
+		"CAE_PLATFORM_WINDOWS",
+		"VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS"
+	}
 
 	filter "configurations:Debug"
 		runtime "Debug"
