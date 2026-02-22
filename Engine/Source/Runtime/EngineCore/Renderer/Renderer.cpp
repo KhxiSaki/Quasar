@@ -98,6 +98,9 @@ void Renderer::Render()
     }
     UpdateUniformBuffer(frameIndex);
 
+    // Update ImGui display size for current window size
+    imGui.updateDisplaySize(static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height));
+
     // Update ImGui
     imGui.newFrame();
     imGui.updateBuffers();

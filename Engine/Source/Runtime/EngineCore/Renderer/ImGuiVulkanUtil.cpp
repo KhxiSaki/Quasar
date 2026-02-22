@@ -56,6 +56,11 @@ void ImGuiVulkanUtil::initialize(float width, float height) {
     setStyle(0);
 }
 
+void ImGuiVulkanUtil::updateDisplaySize(float width, float height) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(width, height);
+}
+
 void ImGuiVulkanUtil::setStyle(uint32_t index) {
     ImGuiStyle& style = ImGui::GetStyle();
 

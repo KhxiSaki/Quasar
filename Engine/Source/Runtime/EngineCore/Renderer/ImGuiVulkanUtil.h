@@ -61,6 +61,7 @@ public:
               vk::raii::Queue& graphicsQueue, vk::raii::CommandPool& commandPool, uint32_t graphicsQueueFamily);
     void setColorFormat(vk::Format format) { colorFormat = format; }
     void initialize(float width, float height);
+    void updateDisplaySize(float width, float height);
     void initResources();
     void setStyle(uint32_t index);
 
