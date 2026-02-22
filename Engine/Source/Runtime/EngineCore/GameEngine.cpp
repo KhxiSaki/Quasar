@@ -23,6 +23,8 @@ void GameEngine::Initialize()
 
     std::cout << "Initializing GameEngine..." << std::endl;
     m_Renderer->Initialize();
+
+    m_Window->imGuiPtr = &m_Renderer->GetImGui();
 }
 
 void GameEngine::MainLoop()
