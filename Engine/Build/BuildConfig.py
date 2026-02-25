@@ -72,5 +72,19 @@ Dependency(
         url="https://github.com/tinyobjloader/tinyobjloader/archive/refs/tags/v1.0.6.zip",
         install_path=f"{THIRD_PARTY_DIR}/tinyobjloader",
         extracted_folder="tinyobjloader"
+    ),
+Dependency(
+        name="tinygltf",
+        version="2.9.7",
+        url="https://github.com/syoyo/tinygltf/archive/refs/tags/v2.9.7.zip",
+        install_path=f"{THIRD_PARTY_DIR}/tinygltf",
+        extracted_folder="tinygltf"
+    ),
+Dependency(
+        name="KTX",
+        version="4.4.2",
+        url="https://github.com/KhronosGroup/KTX-Software/archive/refs/tags/v4.4.2.zip",
+        install_path=f"{THIRD_PARTY_DIR}/KTX",
+        extracted_folder="KTX"
     )
 ]

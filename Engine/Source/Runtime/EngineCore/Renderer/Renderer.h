@@ -25,10 +25,14 @@ import vulkan_hpp;
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <stb_image.h>
+//#include <stb_image.h>
 
-#include <tiny_obj_loader.h>
+//#include <tiny_obj_loader.h>
 
+
+#include <tiny_gltf.h>
+
+#include <ktx.h>
 struct Vertex
 {
 	glm::vec3 pos;
@@ -121,12 +125,14 @@ protected:
 	void CreateCommandPool();
 	void CreateDepthResources();
 	void CreateTextureImage();
+	void CreateTextureImageWithKTX();
 	void CreateImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
 	void CreateTextureImageView();
 	void CreateTextureSampler();
 	void LoadModel();
+	void LoadModelWithGLTF();
 	void CreateVertexBuffer();
 	void CreateIndexBuffer();
 	void CreateUniformBuffers();

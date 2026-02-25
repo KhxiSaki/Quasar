@@ -23,7 +23,9 @@ files {
 		"%{IncludeDir.VulkanSDK}",
 		"%{IncludeDir.GLM}",
 		"%{IncludeDir.stb}",
-"%{IncludeDir.tinyobjloader}"
+"%{IncludeDir.tinyobjloader}",
+"%{IncludeDir.tinygltf}",
+"%{IncludeDir.KTX}"
 	}
 
 	links
