@@ -535,7 +535,6 @@ void ImGuiVulkanUtil::drawFrame(vk::raii::CommandBuffer& commandBuffer, vk::raii
         return;
     }
 
-    printf("ImGui: DisplaySize=(%.0f,%.0f), CmdLists=%d\n", drawData->DisplaySize.x, drawData->DisplaySize.y, drawData->CmdListsCount);
 
     vk::RenderingAttachmentInfo colorAttachmentInfo;
     colorAttachmentInfo.setImageView(swapChainImageView);
