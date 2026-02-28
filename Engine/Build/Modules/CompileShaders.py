@@ -48,40 +48,42 @@ def main():
     print("=" * 60)
     print("  Shader Compilation")
     print("=" * 60)
-    
+
     # Find glslc compiler
     glslc = find_glslc()
     if not glslc:
         return 1
-    
+
     # Define shader directories
     shader_dir = Path("Engine/Shaders")
     output_dir = Path("Engine/Binaries/Shaders")
-    
+
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Find all shader files
     shader_files = []
     for ext in [".vert", ".frag", ".comp", ".geom", ".tesc", ".tese", ".glsl"]:
         shader_files.extend(shader_dir.glob(f"*{ext}"))
         shader_files.extend(shader_dir.glob(f"**/*{ext}"))
-    
+
     # Remove duplicates
     shader_files = list(set(shader_files))
-    
+
     if not shader_files:
         print("\n[!] No shader files found in Engine/Shaders/")
         return 0
-    
+
     print(f"\nFound {len(shader_files)} shader(s) to compile:\n")
-    
+
     # Compile each shader
     success_count = 0
     for shader_path in shader_files:
-        output_name = shader_path.stem + ".spv"
+        # Include the stage extension in the output name to avoid collisions
+        # e.g., Deferred_GeometryPass.vert -> Deferred_GeometryPass.vert.spv
+        output_name = shader_path.stem + shader_path.suffix + ".spv"
         output_path = output_dir / output_name
-        
+
         # Detect shader stage for .glsl files based on filename
         shader_stage = None
         if shader_path.suffix == ".glsl":
@@ -92,7 +94,7 @@ def main():
                 shader_stage = "fragment"
             elif "_comp" in stem_lower:
                 shader_stage = "compute"
-        
+
         if compile_shader(glslc, shader_path, output_path, shader_stage):
             success_count += 1
     

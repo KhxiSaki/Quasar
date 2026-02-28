@@ -71,6 +71,40 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
+	alignas(16) glm::vec3 viewPos;
+	alignas(16) float padding1;
+	alignas(16) glm::vec3 lightPos;
+	alignas(16) float lightRadius;
+	alignas(16) glm::vec3 lightColor;
+	alignas(16) float exposure;
+};
+
+// Light data for lighting pass
+struct LightData {
+	alignas(16) glm::vec3 lightPos;
+	alignas(16) float lightRadius;
+	alignas(16) glm::vec3 lightColor;
+	alignas(16) glm::vec3 viewPos;
+	alignas(16) float exposure;
+};
+
+// G-Buffer structure for deferred rendering
+struct GBufferData {
+	vk::raii::Image positionImage = nullptr;
+	vk::raii::DeviceMemory positionImageMemory = nullptr;
+	vk::raii::ImageView positionImageView = nullptr;
+	
+	vk::raii::Image normalImage = nullptr;
+	vk::raii::DeviceMemory normalImageMemory = nullptr;
+	vk::raii::ImageView normalImageView = nullptr;
+	
+	vk::raii::Image albedoImage = nullptr;
+	vk::raii::DeviceMemory albedoImageMemory = nullptr;
+	vk::raii::ImageView albedoImageView = nullptr;
+	
+	vk::raii::Image pbrImage = nullptr;  // roughness, metallic, ao
+	vk::raii::DeviceMemory pbrImageMemory = nullptr;
+	vk::raii::ImageView pbrImageView = nullptr;
 };
 
 
@@ -148,6 +182,21 @@ protected:
 	void CreateCommandBuffers();
 	void CreateSyncObjects();
 	void recordCommandBuffer(uint32_t imageIndex);
+	
+	// Deferred rendering
+	void CreateGBuffer();
+	void CreateGBufferDescriptorSetLayout();
+	void CreateGBufferDescriptorPool();
+	void CreateGBufferDescriptorSets();
+	void CreateGBufferPipeline();
+	void CreateLightingPassPipeline();
+	void CreateLightingPassDescriptorSetLayout();
+	void CreateLightingPassDescriptorPool();
+	void CreateLightingPassDescriptorSets();
+	void CreateLightingPassLightBuffers();
+	void RecordGeometryPass(uint32_t imageIndex);
+	void RecordLightingPass(uint32_t imageIndex);
+	void CleanupGBuffer();
 	void transition_image_layout(vk::Image               image, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
 		vk::AccessFlags2 src_access_mask, vk::AccessFlags2 dst_access_mask,
 		vk::PipelineStageFlags2 src_stage_mask, vk::PipelineStageFlags2 dst_stage_mask, vk::ImageAspectFlags    image_aspect_flags);
@@ -384,6 +433,26 @@ protected:
 	vk::raii::Image depthImage = nullptr;
 	vk::raii::DeviceMemory depthImageMemory = nullptr;
 	vk::raii::ImageView depthImageView = nullptr;
+
+	// G-Buffer for deferred rendering
+	GBufferData gBuffer;
+	vk::raii::DescriptorSetLayout gBufferDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool gBufferDescriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> gBufferDescriptorSets;
+	vk::raii::Pipeline gBufferPipeline = nullptr;
+	vk::raii::PipelineLayout gBufferPipelineLayout = nullptr;
+	
+	// Lighting pass
+	vk::raii::DescriptorSetLayout lightingPassDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool lightingPassDescriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> lightingPassDescriptorSets;
+	vk::raii::Pipeline lightingPassPipeline = nullptr;
+	vk::raii::PipelineLayout lightingPassPipelineLayout = nullptr;
+	vk::raii::Buffer lightingPassVertexBuffer = nullptr;
+	vk::raii::DeviceMemory lightingPassVertexBufferMemory = nullptr;
+	std::vector<vk::raii::Buffer> lightingPassLightBuffers;
+	std::vector<vk::raii::DeviceMemory> lightingPassLightBuffersMemory;
+	std::vector<void*> lightingPassLightBuffersMapped;
 
 	//Texture
 	vk::raii::Image textureImage = nullptr;
