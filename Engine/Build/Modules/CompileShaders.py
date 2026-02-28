@@ -24,10 +24,13 @@ def find_glslc():
     
     return str(glslc_path)
 
-def compile_shader(glslc, shader_path, output_path):
+def compile_shader(glslc, shader_path, output_path, shader_stage=None):
     """Compile a single shader file."""
     try:
-        cmd = [glslc, str(shader_path), "-o", str(output_path)]
+        cmd = [glslc]
+        if shader_stage:
+            cmd.extend(["-fshader-stage=" + shader_stage])
+        cmd.extend([str(shader_path), "-o", str(output_path)])
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -60,9 +63,12 @@ def main():
     
     # Find all shader files
     shader_files = []
-    for ext in [".vert", ".frag", ".comp", ".geom", ".tesc", ".tese"]:
+    for ext in [".vert", ".frag", ".comp", ".geom", ".tesc", ".tese", ".glsl"]:
         shader_files.extend(shader_dir.glob(f"*{ext}"))
-        shader_files.extend(shader_dir.glob(f"**/*{ext}"))  # Recursively find subdirectories
+        shader_files.extend(shader_dir.glob(f"**/*{ext}"))
+    
+    # Remove duplicates
+    shader_files = list(set(shader_files))
     
     if not shader_files:
         print("\n[!] No shader files found in Engine/Shaders/")
@@ -73,19 +79,21 @@ def main():
     # Compile each shader
     success_count = 0
     for shader_path in shader_files:
-        # Output file naming:
-        # shader.vert -> shader.spv
-        # shader.frag -> frag.spv
-        # myshader.comp -> myshader.spv
-        if shader_path.suffix == ".frag":
-            # Special case for fragment shaders to match engine expectations
-            output_name = shader_path.stem + ".spv"
-        else:
-            output_name = shader_path.stem + ".spv"
-        
+        output_name = shader_path.stem + ".spv"
         output_path = output_dir / output_name
         
-        if compile_shader(glslc, shader_path, output_path):
+        # Detect shader stage for .glsl files based on filename
+        shader_stage = None
+        if shader_path.suffix == ".glsl":
+            stem_lower = shader_path.stem.lower()
+            if "_vertex" in stem_lower:
+                shader_stage = "vertex"
+            elif "_fragment" in stem_lower or "_frag" in stem_lower:
+                shader_stage = "fragment"
+            elif "_comp" in stem_lower:
+                shader_stage = "compute"
+        
+        if compile_shader(glslc, shader_path, output_path, shader_stage):
             success_count += 1
     
     # Summary
