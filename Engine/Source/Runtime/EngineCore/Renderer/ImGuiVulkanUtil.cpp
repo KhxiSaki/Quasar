@@ -334,8 +334,8 @@ void ImGuiVulkanUtil::initResources() {
     vk::raii::ShaderModule fragmentShaderModule{ nullptr };
 
     try {
-        std::vector<char> vertShaderCode = readFile("../Engine/Binaries/Shaders/imgui_vertex.spv");
-        std::vector<char> fragShaderCode = readFile("../Engine/Binaries/Shaders/imgui_fragment.spv");
+        std::vector<char> vertShaderCode = readFile("../Engine/Binaries/Shaders/imgui_vertex.glsl.spv");
+        std::vector<char> fragShaderCode = readFile("../Engine/Binaries/Shaders/imgui_fragment.glsl.spv");
 
         vk::ShaderModuleCreateInfo vertShaderModuleCreateInfo;
         vertShaderModuleCreateInfo.codeSize = vertShaderCode.size();
