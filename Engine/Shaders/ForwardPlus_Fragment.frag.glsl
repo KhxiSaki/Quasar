@@ -1,3 +1,5 @@
+// Forward+ Fragment Shader (tile buffers commented out for now)
+
 #version 460 core
 
 layout(binding = 0) uniform UniformBufferObject {
@@ -28,6 +30,8 @@ layout(binding = 2) uniform LightBuffer {
     ForwardPlusLight lights[256];
 } lightBuffer;
 
+// Tile buffers - commented out (enable when implementing Forward+ light culling)
+/*
 layout(binding = 3) buffer TileLightIndexBuffer {
     uint tileLightIndices[];
 } tileLightIndexBuffer;
@@ -35,6 +39,7 @@ layout(binding = 3) buffer TileLightIndexBuffer {
 layout(binding = 4) buffer TileCountBuffer {
     uint tileLightCounts[];
 } tileCountBuffer;
+*/
 
 const uint TILE_SIZE = 16;
 const uint MAX_LIGHTS_PER_TILE = 64;
@@ -71,17 +76,21 @@ void main()
     vec3 baseColor = fragColor * texColor.rgb;
     vec3 normal = normalize(fragNormal);
     
+    // Tile calculation - commented out
+    /*
     uint tileX = uint(gl_FragCoord.x) / TILE_SIZE;
     uint tileY = uint(gl_FragCoord.y) / TILE_SIZE;
     uint numTilesX = uint(ubo.numTiles.x);
-    
     uint tileIndex = tileY * numTilesX + tileX;
+    */
     
     vec3 resultColor = vec3(0.0);
     
     // Add ambient
     resultColor += baseColor * 0.1;
     
+    // Tile-based lighting - commented out
+    /*
     // Read light count for this tile
     uint lightCount = tileCountBuffer.tileLightCounts[tileIndex];
     lightCount = min(lightCount, MAX_LIGHTS_PER_TILE);
@@ -95,6 +104,7 @@ void main()
             resultColor += calculateLight(lightBuffer.lights[lightIndex], fragWorldPos, normal, baseColor);
         }
     }
+    */
     
     // Just output base color (no lighting)
     resultColor = baseColor;

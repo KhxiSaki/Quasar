@@ -1,7 +1,11 @@
+// Forward+ Light Culling Compute Shader (commented out for now - no real lights yet)
+
 #version 460 core
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
+// Uncomment when enabling Forward+ light culling:
+/*
 struct ForwardPlusLight {
     vec3 position;
     float radius;
@@ -74,7 +78,6 @@ void main()
         float lightRadius = lightBuffer.lights[i].radius;
         
         // Simple distance-based culling
-        // In a real implementation, you'd use frustum-aabb or sphere-frustum tests
         vec4 lightViewPos = ubo.view * vec4(lightPos, 1.0);
         
         // Project light position to screen space
@@ -92,4 +95,9 @@ void main()
     }
     
     tileCountBuffer.tileLightCounts[tileIndex] = lightCount;
+}
+*/
+void main()
+{
+    // No-op - Forward+ light culling disabled
 }

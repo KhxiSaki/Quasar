@@ -1236,12 +1236,14 @@ void Renderer::CreateForwardPlusLightBuffer()
 
 void Renderer::CreateForwardPlusDescriptorSetLayout()
 {
+    // Forward+ descriptor layout (without tile buffers for now)
     std::array bindings = {
         vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
         vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
-        vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
-        vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
-        vk::DescriptorSetLayoutBinding(4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr)
+        vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr)
+        // Add these back for tile-based culling:
+        // vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute | vk::ShaderStageFlagBits::eFragment, nullptr),
+        // vk::DescriptorSetLayoutBinding(4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute | vk::ShaderStageFlagBits::eFragment, nullptr)
     };
     
     vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
@@ -1294,6 +1296,8 @@ void Renderer::CreateForwardPlusDescriptorSets()
         lightBufferInfo.offset = 0;
         lightBufferInfo.range = sizeof(ForwardPlusLight) * MAX_LIGHTS;
         
+        // Tile buffer bindings (for Forward+ light culling) - commented out for now
+        /*
         vk::DescriptorBufferInfo tileIndexBufferInfo;
         tileIndexBufferInfo.buffer = tileLightIndexBuffer;
         tileIndexBufferInfo.offset = 0;
@@ -1307,13 +1311,15 @@ void Renderer::CreateForwardPlusDescriptorSets()
         tileCountBufferInfo.buffer = tileCountBuffer;
         tileCountBufferInfo.offset = 0;
         tileCountBufferInfo.range = sizeof(uint32_t) * tileCountX * tileCountY;
+        */
         
         std::array descriptorWrites = {
             vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &uboInfo, nullptr},
             vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 1, 0, 1, vk::DescriptorType::eCombinedImageSampler, &imageInfo, nullptr, nullptr},
-            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 2, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &lightBufferInfo, nullptr},
-            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileIndexBufferInfo, nullptr},
-            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 4, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileCountBufferInfo, nullptr}
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 2, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &lightBufferInfo, nullptr}
+            // Add these back when enabling tile-based light culling:
+            // vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileIndexBufferInfo, nullptr},
+            // vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 4, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileCountBufferInfo, nullptr}
         };
         
         VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
