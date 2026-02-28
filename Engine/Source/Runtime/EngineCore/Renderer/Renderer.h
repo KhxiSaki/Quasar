@@ -77,6 +77,9 @@ struct UniformBufferObject {
 	alignas(16) float lightRadius;
 	alignas(16) glm::vec3 lightColor;
 	alignas(16) float exposure;
+	alignas(16) glm::vec2 numTiles;
+	alignas(16) float padding2;
+	alignas(16) float padding3;
 };
 
 // Light data for lighting pass
@@ -88,24 +91,17 @@ struct LightData {
 	alignas(16) float exposure;
 };
 
-// G-Buffer structure for deferred rendering
-struct GBufferData {
-	vk::raii::Image positionImage = nullptr;
-	vk::raii::DeviceMemory positionImageMemory = nullptr;
-	vk::raii::ImageView positionImageView = nullptr;
-	
-	vk::raii::Image normalImage = nullptr;
-	vk::raii::DeviceMemory normalImageMemory = nullptr;
-	vk::raii::ImageView normalImageView = nullptr;
-	
-	vk::raii::Image albedoImage = nullptr;
-	vk::raii::DeviceMemory albedoImageMemory = nullptr;
-	vk::raii::ImageView albedoImageView = nullptr;
-	
-	vk::raii::Image pbrImage = nullptr;  // roughness, metallic, ao
-	vk::raii::DeviceMemory pbrImageMemory = nullptr;
-	vk::raii::ImageView pbrImageView = nullptr;
+// Forward+ light structure
+struct ForwardPlusLight {
+	alignas(16) glm::vec3 position;
+	alignas(16) float radius;
+	alignas(16) glm::vec3 color;
+	alignas(16) float intensity;
 };
+
+constexpr uint32_t MAX_LIGHTS = 256;
+constexpr uint32_t TILE_SIZE = 16;
+constexpr uint32_t MAX_LIGHTS_PER_TILE = 64;
 
 
 class Window;
@@ -183,20 +179,16 @@ protected:
 	void CreateSyncObjects();
 	void recordCommandBuffer(uint32_t imageIndex);
 	
-	// Deferred rendering
-	void CreateGBuffer();
-	void CreateGBufferDescriptorSetLayout();
-	void CreateGBufferDescriptorPool();
-	void CreateGBufferDescriptorSets();
-	void CreateGBufferPipeline();
-	void CreateLightingPassPipeline();
-	void CreateLightingPassDescriptorSetLayout();
-	void CreateLightingPassDescriptorPool();
-	void CreateLightingPassDescriptorSets();
-	void CreateLightingPassLightBuffers();
-	void RecordGeometryPass(uint32_t imageIndex);
-	void RecordLightingPass(uint32_t imageIndex);
-	void CleanupGBuffer();
+	// Forward+ rendering
+	void CreateForwardPlusLightBuffer();
+	void CreateForwardPlusDescriptorSetLayout();
+	void CreateForwardPlusDescriptorPool();
+	void CreateForwardPlusDescriptorSets();
+	void CreateLightCullingPipeline();
+	void CreateForwardPlusPipeline();
+	void RecordLightCulling(uint32_t imageIndex);
+	void RecordForwardPlusPass(uint32_t imageIndex);
+	void CleanupForwardPlus();
 	void transition_image_layout(vk::Image               image, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
 		vk::AccessFlags2 src_access_mask, vk::AccessFlags2 dst_access_mask,
 		vk::PipelineStageFlags2 src_stage_mask, vk::PipelineStageFlags2 dst_stage_mask, vk::ImageAspectFlags    image_aspect_flags);
@@ -434,15 +426,28 @@ protected:
 	vk::raii::DeviceMemory depthImageMemory = nullptr;
 	vk::raii::ImageView depthImageView = nullptr;
 
-	// G-Buffer for deferred rendering
-	GBufferData gBuffer;
-	vk::raii::DescriptorSetLayout gBufferDescriptorSetLayout = nullptr;
-	vk::raii::DescriptorPool gBufferDescriptorPool = nullptr;
-	std::vector<vk::raii::DescriptorSet> gBufferDescriptorSets;
-	vk::raii::Pipeline gBufferPipeline = nullptr;
-	vk::raii::PipelineLayout gBufferPipelineLayout = nullptr;
+	// Forward+ data
+	vk::raii::Buffer forwardPlusLightBuffer = nullptr;
+	vk::raii::DeviceMemory forwardPlusLightBufferMemory = nullptr;
+	void* forwardPlusLightBufferMapped = nullptr;
+	vk::raii::Buffer tileLightIndexBuffer = nullptr;
+	vk::raii::DeviceMemory tileLightIndexBufferMemory = nullptr;
+	vk::raii::Buffer tileCountBuffer = nullptr;
+	vk::raii::DeviceMemory tileCountBufferMemory = nullptr;
 	
-	// Lighting pass
+	vk::raii::DescriptorSetLayout forwardPlusDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool forwardPlusDescriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> forwardPlusDescriptorSets;
+	
+	// Light culling compute pipeline
+	vk::raii::Pipeline lightCullingPipeline = nullptr;
+	vk::raii::PipelineLayout lightCullingPipelineLayout = nullptr;
+	
+	// Forward+ graphics pipeline
+	vk::raii::Pipeline forwardPlusPipeline = nullptr;
+	vk::raii::PipelineLayout forwardPlusPipelineLayout = nullptr;
+	
+	// Legacy lighting pass (for reference, will be replaced)
 	vk::raii::DescriptorSetLayout lightingPassDescriptorSetLayout = nullptr;
 	vk::raii::DescriptorPool lightingPassDescriptorPool = nullptr;
 	std::vector<vk::raii::DescriptorSet> lightingPassDescriptorSets;

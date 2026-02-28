@@ -51,11 +51,7 @@ void Renderer::Initialize()
     CreateGraphicsPipeline();
     CreateCommandPool();
     CreateDepthResources();
-    CreateGBuffer();
-    CreateGBufferDescriptorSetLayout();
-    CreateGBufferPipeline();
-    CreateLightingPassDescriptorSetLayout();
-    CreateLightingPassPipeline();
+    
     CreateTextureImage();
     // CreateTextureImageWithKTX();
     CreateTextureImageView();
@@ -67,11 +63,15 @@ void Renderer::Initialize()
     CreateUniformBuffers();
     CreateDescriptorPool();
     CreateDescriptorSets();
-    CreateGBufferDescriptorPool();
-    CreateGBufferDescriptorSets();
-    CreateLightingPassDescriptorPool();
-    CreateLightingPassLightBuffers();
-    CreateLightingPassDescriptorSets();
+    
+    // Forward+ setup (needs VulkanUniformBuffers created first)
+    CreateForwardPlusLightBuffer();
+    CreateForwardPlusDescriptorSetLayout();
+    CreateLightCullingPipeline();
+    CreateForwardPlusPipeline();
+    CreateForwardPlusDescriptorPool();
+    CreateForwardPlusDescriptorSets();
+    
     CreateCommandBuffers();
     CreateSyncObjects();
 
@@ -525,290 +525,6 @@ void Renderer::CreateDepthResources()
     depthImageView = CreateImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 }
 
-void Renderer::CreateGBuffer()
-{
-    // Create G-Buffer attachments for deferred rendering
-    uint32_t width = VulkanSwapChainExtent.width;
-    uint32_t height = VulkanSwapChainExtent.height;
-    
-    // Position buffer - RGBA32F for world space position
-    CreateImage(width, height, vk::Format::eR32G32B32A32Sfloat, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, gBuffer.positionImage, gBuffer.positionImageMemory);
-    gBuffer.positionImageView = CreateImageView(gBuffer.positionImage, vk::Format::eR32G32B32A32Sfloat, vk::ImageAspectFlagBits::eColor);
-    
-    // Normal buffer - RGBA16F for world space normal
-    CreateImage(width, height, vk::Format::eR16G16B16A16Sfloat, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, gBuffer.normalImage, gBuffer.normalImageMemory);
-    gBuffer.normalImageView = CreateImageView(gBuffer.normalImage, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor);
-    
-    // Albedo buffer - RGBA8 for color
-    CreateImage(width, height, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, gBuffer.albedoImage, gBuffer.albedoImageMemory);
-    gBuffer.albedoImageView = CreateImageView(gBuffer.albedoImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
-    
-    // PBR buffer - RGBA8 for roughness, metallic, AO
-    CreateImage(width, height, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, gBuffer.pbrImage, gBuffer.pbrImageMemory);
-    gBuffer.pbrImageView = CreateImageView(gBuffer.pbrImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
-}
-
-void Renderer::CleanupGBuffer()
-{
-    gBuffer.positionImageView = nullptr;
-    gBuffer.positionImage = nullptr;
-    gBuffer.positionImageMemory = nullptr;
-    
-    gBuffer.normalImageView = nullptr;
-    gBuffer.normalImage = nullptr;
-    gBuffer.normalImageMemory = nullptr;
-    
-    gBuffer.albedoImageView = nullptr;
-    gBuffer.albedoImage = nullptr;
-    gBuffer.albedoImageMemory = nullptr;
-    
-    gBuffer.pbrImageView = nullptr;
-    gBuffer.pbrImage = nullptr;
-    gBuffer.pbrImageMemory = nullptr;
-}
-
-void Renderer::CreateGBufferDescriptorSetLayout()
-{
-    std::array bindings = {
-        vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr),
-        vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr)
-    };
-    
-    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
-    gBufferDescriptorSetLayout = vk::raii::DescriptorSetLayout(VulkanLogicalDevice, layoutInfo);
-}
-
-void Renderer::CreateGBufferPipeline()
-{
-    vk::raii::ShaderModule vertexShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/Deferred_GeometryPass.vert.spv"));
-    vk::raii::ShaderModule fragmentShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/Deferred_GeometryPass.frag.spv"));
-    
-    vk::PipelineShaderStageCreateInfo vertShaderStageInfo;
-    vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
-    vertShaderStageInfo.module = vertexShaderModule;
-    vertShaderStageInfo.pName = "main";
-    
-    vk::PipelineShaderStageCreateInfo fragShaderStageInfo;
-    fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment;
-    fragShaderStageInfo.module = fragmentShaderModule;
-    fragShaderStageInfo.pName = "main";
-    
-    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-    
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
-    
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
-    
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
-    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
-    inputAssembly.primitiveRestartEnable = vk::False;
-    
-    vk::PipelineViewportStateCreateInfo viewportState;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-    
-    vk::PipelineRasterizationStateCreateInfo rasterizer;
-    rasterizer.depthClampEnable = vk::False;
-    rasterizer.rasterizerDiscardEnable = vk::False;
-    rasterizer.polygonMode = vk::PolygonMode::eFill;
-    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
-    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
-    rasterizer.depthBiasEnable = vk::False;
-    rasterizer.lineWidth = 1.0f;
-    
-    vk::PipelineMultisampleStateCreateInfo multisampling;
-    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
-    multisampling.sampleShadingEnable = vk::False;
-    
-    vk::PipelineDepthStencilStateCreateInfo depthStencil;
-    depthStencil.depthTestEnable = vk::True;
-    depthStencil.depthWriteEnable = vk::True;
-    depthStencil.depthCompareOp = vk::CompareOp::eLess;
-    depthStencil.depthBoundsTestEnable = vk::False;
-    depthStencil.stencilTestEnable = vk::False;
-    
-    // Multiple color attachments for G-Buffer
-    std::array<vk::PipelineColorBlendAttachmentState, 4> colorBlendAttachments;
-    for (auto& attachment : colorBlendAttachments) {
-        attachment.blendEnable = vk::False;
-        attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    }
-    
-    vk::PipelineColorBlendStateCreateInfo colorBlending;
-    colorBlending.logicOpEnable = vk::False;
-    colorBlending.logicOp = vk::LogicOp::eCopy;
-    colorBlending.attachmentCount = colorBlendAttachments.size();
-    colorBlending.pAttachments = colorBlendAttachments.data();
-    
-    std::vector dynamicStates = {
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor };
-    vk::PipelineDynamicStateCreateInfo dynamicState;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-    
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &*gBufferDescriptorSetLayout;
-    
-    gBufferPipelineLayout = vk::raii::PipelineLayout(VulkanLogicalDevice, pipelineLayoutInfo);
-    
-    // Pipeline rendering info with multiple color attachments
-    std::array<vk::Format, 4> colorFormats = {
-        vk::Format::eR32G32B32A32Sfloat,  // Position
-        vk::Format::eR16G16B16A16Sfloat,  // Normal
-        vk::Format::eR8G8B8A8Unorm,       // Albedo
-        vk::Format::eR8G8B8A8Unorm        // PBR
-    };
-    
-    vk::PipelineRenderingCreateInfo pipelineRenderingInfo;
-    pipelineRenderingInfo.colorAttachmentCount = colorFormats.size();
-    pipelineRenderingInfo.pColorAttachmentFormats = colorFormats.data();
-    pipelineRenderingInfo.depthAttachmentFormat = findDepthFormat();
-    
-    vk::GraphicsPipelineCreateInfo graphicsPipelineInfo;
-    graphicsPipelineInfo.stageCount = 2;
-    graphicsPipelineInfo.pStages = shaderStages;
-    graphicsPipelineInfo.pVertexInputState = &vertexInputInfo;
-    graphicsPipelineInfo.pInputAssemblyState = &inputAssembly;
-    graphicsPipelineInfo.pViewportState = &viewportState;
-    graphicsPipelineInfo.pRasterizationState = &rasterizer;
-    graphicsPipelineInfo.pMultisampleState = &multisampling;
-    graphicsPipelineInfo.pDepthStencilState = &depthStencil;
-    graphicsPipelineInfo.pColorBlendState = &colorBlending;
-    graphicsPipelineInfo.pDynamicState = &dynamicState;
-    graphicsPipelineInfo.layout = gBufferPipelineLayout;
-    graphicsPipelineInfo.renderPass = nullptr;
-    graphicsPipelineInfo.pNext = &pipelineRenderingInfo;
-    
-    gBufferPipeline = vk::raii::Pipeline(VulkanLogicalDevice, nullptr, graphicsPipelineInfo);
-}
-
-void Renderer::CreateLightingPassDescriptorSetLayout()
-{
-    std::array bindings = {
-        vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),  // gPosition
-        vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),  // gNormal
-        vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),  // gAlbedo
-        vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),  // gPBR
-        vk::DescriptorSetLayoutBinding(4, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr)          // LightData
-    };
-    
-    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
-    lightingPassDescriptorSetLayout = vk::raii::DescriptorSetLayout(VulkanLogicalDevice, layoutInfo);
-}
-
-void Renderer::CreateLightingPassPipeline()
-{
-    vk::raii::ShaderModule vertexShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/Deferred_LightingPass.vert.spv"));
-    vk::raii::ShaderModule fragmentShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/Deferred_LightingPass.frag.spv"));
-    
-    vk::PipelineShaderStageCreateInfo vertShaderStageInfo;
-    vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
-    vertShaderStageInfo.module = vertexShaderModule;
-    vertShaderStageInfo.pName = "main";
-    
-    vk::PipelineShaderStageCreateInfo fragShaderStageInfo;
-    fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment;
-    fragShaderStageInfo.module = fragmentShaderModule;
-    fragShaderStageInfo.pName = "main";
-    
-    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-    
-    // No vertex input for full-screen quad (using gl_VertexIndex)
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
-    
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
-    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
-    inputAssembly.primitiveRestartEnable = vk::False;
-    
-    vk::PipelineViewportStateCreateInfo viewportState;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-    
-    vk::PipelineRasterizationStateCreateInfo rasterizer;
-    rasterizer.depthClampEnable = vk::False;
-    rasterizer.rasterizerDiscardEnable = vk::False;
-    rasterizer.polygonMode = vk::PolygonMode::eFill;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;  // No culling for full-screen quad
-    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
-    rasterizer.depthBiasEnable = vk::False;
-    rasterizer.lineWidth = 1.0f;
-    
-    vk::PipelineMultisampleStateCreateInfo multisampling;
-    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
-    multisampling.sampleShadingEnable = vk::False;
-    
-    // No depth testing for lighting pass
-    vk::PipelineDepthStencilStateCreateInfo depthStencil;
-    depthStencil.depthTestEnable = vk::False;
-    depthStencil.depthWriteEnable = vk::False;
-    depthStencil.depthCompareOp = vk::CompareOp::eAlways;
-    depthStencil.depthBoundsTestEnable = vk::False;
-    depthStencil.stencilTestEnable = vk::False;
-    
-    vk::PipelineColorBlendAttachmentState colorBlendAttachment;
-    colorBlendAttachment.blendEnable = vk::False;
-    colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    
-    vk::PipelineColorBlendStateCreateInfo colorBlending;
-    colorBlending.logicOpEnable = vk::False;
-    colorBlending.logicOp = vk::LogicOp::eCopy;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-    
-    std::vector dynamicStates = {
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor };
-    vk::PipelineDynamicStateCreateInfo dynamicState;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-    
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &*lightingPassDescriptorSetLayout;
-    
-    lightingPassPipelineLayout = vk::raii::PipelineLayout(VulkanLogicalDevice, pipelineLayoutInfo);
-    
-    vk::PipelineRenderingCreateInfo pipelineRenderingInfo;
-    pipelineRenderingInfo.colorAttachmentCount = 1;
-    pipelineRenderingInfo.pColorAttachmentFormats = &VulkanSwapChainSurfaceFormat.format;
-    
-    vk::GraphicsPipelineCreateInfo graphicsPipelineInfo;
-    graphicsPipelineInfo.stageCount = 2;
-    graphicsPipelineInfo.pStages = shaderStages;
-    graphicsPipelineInfo.pVertexInputState = &vertexInputInfo;
-    graphicsPipelineInfo.pInputAssemblyState = &inputAssembly;
-    graphicsPipelineInfo.pViewportState = &viewportState;
-    graphicsPipelineInfo.pRasterizationState = &rasterizer;
-    graphicsPipelineInfo.pMultisampleState = &multisampling;
-    graphicsPipelineInfo.pDepthStencilState = &depthStencil;
-    graphicsPipelineInfo.pColorBlendState = &colorBlending;
-    graphicsPipelineInfo.pDynamicState = &dynamicState;
-    graphicsPipelineInfo.layout = lightingPassPipelineLayout;
-    graphicsPipelineInfo.renderPass = nullptr;
-    graphicsPipelineInfo.pNext = &pipelineRenderingInfo;
-    
-    lightingPassPipeline = vk::raii::Pipeline(VulkanLogicalDevice, nullptr, graphicsPipelineInfo);
-}
-
 void Renderer::CreateTextureImage()
 {
     int texWidth, texHeight, texChannels;
@@ -1197,184 +913,6 @@ void Renderer::CreateDescriptorSets()
     }
 }
 
-void Renderer::CreateGBufferDescriptorPool()
-{
-    std::array poolSize{
-        vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT),
-        vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT)
-    };
-    
-    vk::DescriptorPoolCreateInfo poolInfo;
-    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size());
-    poolInfo.pPoolSizes = poolSize.data();
-    
-    gBufferDescriptorPool = vk::raii::DescriptorPool(VulkanLogicalDevice, poolInfo);
-}
-
-void Renderer::CreateGBufferDescriptorSets()
-{
-    // Free existing descriptor sets if any
-    if (!gBufferDescriptorSets.empty()) {
-        //VulkanLogicalDevice.(gBufferDescriptorPool, gBufferDescriptorSets);
-        gBufferDescriptorSets.clear();
-    }
-    
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *gBufferDescriptorSetLayout);
-    vk::DescriptorSetAllocateInfo allocInfo;
-    allocInfo.descriptorPool = gBufferDescriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-    allocInfo.pSetLayouts = layouts.data();
-    
-    gBufferDescriptorSets = VulkanLogicalDevice.allocateDescriptorSets(allocInfo);
-    
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        vk::DescriptorBufferInfo bufferInfo;
-        bufferInfo.buffer = VulkanUniformBuffers[i];
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(UniformBufferObject);
-        
-        vk::DescriptorImageInfo imageInfo;
-        imageInfo.sampler = textureSampler;
-        imageInfo.imageView = textureImageView;
-        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        
-        vk::WriteDescriptorSet bufferDescriptorWrite;
-        bufferDescriptorWrite.dstSet = gBufferDescriptorSets[i];
-        bufferDescriptorWrite.dstBinding = 0;
-        bufferDescriptorWrite.dstArrayElement = 0;
-        bufferDescriptorWrite.descriptorCount = 1;
-        bufferDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        bufferDescriptorWrite.pBufferInfo = &bufferInfo;
-        
-        vk::WriteDescriptorSet imageDescriptorWrite;
-        imageDescriptorWrite.dstSet = gBufferDescriptorSets[i];
-        imageDescriptorWrite.dstBinding = 1;
-        imageDescriptorWrite.dstArrayElement = 0;
-        imageDescriptorWrite.descriptorCount = 1;
-        imageDescriptorWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        imageDescriptorWrite.pImageInfo = &imageInfo;
-        
-        std::array descriptorWrites{ bufferDescriptorWrite, imageDescriptorWrite };
-        VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
-    }
-}
-
-void Renderer::CreateLightingPassDescriptorPool()
-{
-    std::array poolSize{
-        vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT * 4),  // 4 G-Buffer textures
-        vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT)  // Light data
-    };
-    
-    vk::DescriptorPoolCreateInfo poolInfo;
-    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size());
-    poolInfo.pPoolSizes = poolSize.data();
-    
-    lightingPassDescriptorPool = vk::raii::DescriptorPool(VulkanLogicalDevice, poolInfo);
-}
-
-void Renderer::CreateLightingPassDescriptorSets()
-{
-    // Free existing descriptor sets if any
-    if (!lightingPassDescriptorSets.empty()) {
-       // VulkanLogicalDevice.freeDescriptorSets(lightingPassDescriptorPool, lightingPassDescriptorSets);
-        lightingPassDescriptorSets.clear();
-    }
-    
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *lightingPassDescriptorSetLayout);
-    vk::DescriptorSetAllocateInfo allocInfo;
-    allocInfo.descriptorPool = lightingPassDescriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-    allocInfo.pSetLayouts = layouts.data();
-    
-    lightingPassDescriptorSets = VulkanLogicalDevice.allocateDescriptorSets(allocInfo);
-    
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        std::array<vk::DescriptorImageInfo, 4> imageInfos;
-        
-        // gPosition
-        imageInfos[0].sampler = textureSampler;
-        imageInfos[0].imageView = gBuffer.positionImageView;
-        imageInfos[0].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        
-        // gNormal
-        imageInfos[1].sampler = textureSampler;
-        imageInfos[1].imageView = gBuffer.normalImageView;
-        imageInfos[1].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        
-        // gAlbedo
-        imageInfos[2].sampler = textureSampler;
-        imageInfos[2].imageView = gBuffer.albedoImageView;
-        imageInfos[2].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        
-        // gPBR
-        imageInfos[3].sampler = textureSampler;
-        imageInfos[3].imageView = gBuffer.pbrImageView;
-        imageInfos[3].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        
-        vk::DescriptorBufferInfo lightBufferInfo;
-        lightBufferInfo.buffer = lightingPassLightBuffers[i];
-        lightBufferInfo.offset = 0;
-        lightBufferInfo.range = sizeof(LightData);
-        
-        std::array<vk::WriteDescriptorSet, 5> descriptorWrites;
-        
-        // G-Buffer image descriptors
-        for (size_t j = 0; j < 4; j++)
-        {
-            descriptorWrites[j].dstSet = lightingPassDescriptorSets[i];
-            descriptorWrites[j].dstBinding = j;
-            descriptorWrites[j].dstArrayElement = 0;
-            descriptorWrites[j].descriptorCount = 1;
-            descriptorWrites[j].descriptorType = vk::DescriptorType::eCombinedImageSampler;
-            descriptorWrites[j].pImageInfo = &imageInfos[j];
-        }
-        
-        // Light data descriptor
-        descriptorWrites[4].dstSet = lightingPassDescriptorSets[i];
-        descriptorWrites[4].dstBinding = 4;
-        descriptorWrites[4].dstArrayElement = 0;
-        descriptorWrites[4].descriptorCount = 1;
-        descriptorWrites[4].descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrites[4].pBufferInfo = &lightBufferInfo;
-        
-        VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
-    }
-}
-
-void Renderer::CreateLightingPassLightBuffers()
-{
-    lightingPassLightBuffers.clear();
-    lightingPassLightBuffersMemory.clear();
-    lightingPassLightBuffersMapped.clear();
-    
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vk::DeviceSize bufferSize = sizeof(LightData);
-        vk::raii::Buffer buffer({});
-        vk::raii::DeviceMemory bufferMem({});
-        CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
-        lightingPassLightBuffers.emplace_back(std::move(buffer));
-        lightingPassLightBuffersMemory.emplace_back(std::move(bufferMem));
-        lightingPassLightBuffersMapped.emplace_back(lightingPassLightBuffersMemory[i].mapMemory(0, bufferSize));
-        
-        // Initialize with default light data
-        LightData lightData{};
-        lightData.lightPos = glm::vec3(0.0f, 0.0f, 2.0f);
-        lightData.lightRadius = 10.0f;
-        lightData.lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        lightData.viewPos = glm::vec3(2.0f, 2.0f, 2.0f);
-        lightData.exposure = 1.0f;
-        
-        memcpy(lightingPassLightBuffersMapped[i], &lightData, sizeof(lightData));
-    }
-}
-
 void Renderer::CreateVertexBuffer()
 {
     vk::DeviceSize         bufferSize = sizeof(vertices[0]) * vertices.size();
@@ -1473,18 +1011,14 @@ void Renderer::UpdateUniformBuffer(uint32_t currentImage)
     ubo.lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
     ubo.lightRadius = 10.0f;
     ubo.exposure = 1.0f;
+    ubo.numTiles = glm::vec2(
+        static_cast<float>((VulkanSwapChainExtent.width + TILE_SIZE - 1) / TILE_SIZE),
+        static_cast<float>((VulkanSwapChainExtent.height + TILE_SIZE - 1) / TILE_SIZE)
+    );
 
-    memcpy(VulkanUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
-    
-    // Update lighting pass light data
-    LightData lightData{};
-    lightData.lightPos = ubo.lightPos;
-    lightData.lightRadius = ubo.lightRadius;
-    lightData.lightColor = ubo.lightColor;
-    lightData.viewPos = ubo.viewPos;
-    lightData.exposure = ubo.exposure;
-    
-    memcpy(lightingPassLightBuffersMapped[currentImage], &lightData, sizeof(lightData));
+    if (!VulkanUniformBuffersMapped.empty()) {
+        memcpy(VulkanUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+    }
 }
 
 void Renderer::recordCommandBuffer(uint32_t imageIndex)
@@ -1514,93 +1048,11 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
         vk::ImageAspectFlagBits::eDepth);
     
-    // Transition G-Buffer images to color attachment optimal
-    transition_image_layout(
-        *gBuffer.positionImage,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::ImageAspectFlagBits::eColor);
+    // ==================== LIGHT CULLING (Compute) ====================
+    RecordLightCulling(imageIndex);
     
-    transition_image_layout(
-        *gBuffer.normalImage,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::ImageAspectFlagBits::eColor);
-    
-    transition_image_layout(
-        *gBuffer.albedoImage,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::ImageAspectFlagBits::eColor);
-    
-    transition_image_layout(
-        *gBuffer.pbrImage,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::ImageAspectFlagBits::eColor);
-    
-    // ==================== GEOMETRY PASS ====================
-    RecordGeometryPass(imageIndex);
-    
-    // Transition G-Buffer images to shader read optimal for lighting pass
-    transition_image_layout(
-        *gBuffer.positionImage,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::AccessFlagBits2::eShaderRead,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eFragmentShader,
-        vk::ImageAspectFlagBits::eColor);
-    
-    transition_image_layout(
-        *gBuffer.normalImage,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::AccessFlagBits2::eShaderRead,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eFragmentShader,
-        vk::ImageAspectFlagBits::eColor);
-    
-    transition_image_layout(
-        *gBuffer.albedoImage,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::AccessFlagBits2::eShaderRead,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eFragmentShader,
-        vk::ImageAspectFlagBits::eColor);
-    
-    transition_image_layout(
-        *gBuffer.pbrImage,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::AccessFlagBits2::eShaderRead,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eFragmentShader,
-        vk::ImageAspectFlagBits::eColor);
-    
-    // ==================== LIGHTING PASS ====================
-    RecordLightingPass(imageIndex);
+    // ==================== FORWARD+ RENDER ====================
+    RecordForwardPlusPass(imageIndex);
     
     // Render ImGui on top
     imGui.drawFrame(commandBuffer, VulkanSwapChainImageViews[imageIndex], VulkanSwapChainExtent);
@@ -1619,107 +1071,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.end();
 }
 
-void Renderer::RecordGeometryPass(uint32_t imageIndex)
-{
-    auto& commandBuffer = VulkanCommandBuffers[frameIndex];
 
-    vk::ClearValue clearPosition = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    vk::ClearValue clearNormal = vk::ClearColorValue(0.5f, 0.5f, 1.0f, 1.0f);  // Normalized to [0,1], (0,0,1) in world space
-    vk::ClearValue clearAlbedo = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    vk::ClearValue clearPBR = vk::ClearColorValue(0.5f, 0.0f, 1.0f, 1.0f);  // roughness=0.5, metallic=0, ao=1
-    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
-    
-    std::array<vk::RenderingAttachmentInfo, 4> colorAttachments;
-    
-    // Position attachment
-    colorAttachments[0].setImageView(gBuffer.positionImageView);
-    colorAttachments[0].setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
-    colorAttachments[0].setLoadOp(vk::AttachmentLoadOp::eClear);
-    colorAttachments[0].setStoreOp(vk::AttachmentStoreOp::eStore);
-    colorAttachments[0].setClearValue(clearPosition);
-    
-    // Normal attachment
-    colorAttachments[1].setImageView(gBuffer.normalImageView);
-    colorAttachments[1].setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
-    colorAttachments[1].setLoadOp(vk::AttachmentLoadOp::eClear);
-    colorAttachments[1].setStoreOp(vk::AttachmentStoreOp::eStore);
-    colorAttachments[1].setClearValue(clearNormal);
-    
-    // Albedo attachment
-    colorAttachments[2].setImageView(gBuffer.albedoImageView);
-    colorAttachments[2].setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
-    colorAttachments[2].setLoadOp(vk::AttachmentLoadOp::eClear);
-    colorAttachments[2].setStoreOp(vk::AttachmentStoreOp::eStore);
-    colorAttachments[2].setClearValue(clearAlbedo);
-    
-    // PBR attachment
-    colorAttachments[3].setImageView(gBuffer.pbrImageView);
-    colorAttachments[3].setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
-    colorAttachments[3].setLoadOp(vk::AttachmentLoadOp::eClear);
-    colorAttachments[3].setStoreOp(vk::AttachmentStoreOp::eStore);
-    colorAttachments[3].setClearValue(clearPBR);
-    
-    vk::RenderingAttachmentInfo depthAttachmentInfo;
-    depthAttachmentInfo.setImageView(depthImageView);
-    depthAttachmentInfo.setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal);
-    depthAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
-    depthAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eDontCare);
-    depthAttachmentInfo.setClearValue(clearDepth);
-    
-    vk::RenderingInfo renderingInfo;
-    vk::Rect2D rect2d;
-    rect2d.offset = vk::Offset2D{ 0, 0 };
-    rect2d.extent = VulkanSwapChainExtent;
-    
-    renderingInfo.renderArea = rect2d;
-    renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = colorAttachments.size();
-    renderingInfo.pColorAttachments = colorAttachments.data();
-    renderingInfo.pDepthAttachment = &depthAttachmentInfo;
-    
-    commandBuffer.beginRendering(renderingInfo);
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *gBufferPipeline);
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
-    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
-    commandBuffer.bindVertexBuffers(0, *VulkanVertexBuffer, { 0 });
-    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint32);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, gBufferPipelineLayout, 0, *gBufferDescriptorSets[frameIndex], nullptr);
-    commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
-    commandBuffer.endRendering();
-}
 
-void Renderer::RecordLightingPass(uint32_t imageIndex)
-{
-    auto& commandBuffer = VulkanCommandBuffers[frameIndex];
 
-    // Clear to dark gray instead of pure black to see if lighting is working
-    vk::ClearValue clearColor = vk::ClearColorValue(0.1f, 0.1f, 0.1f, 1.0f);
-
-    vk::RenderingAttachmentInfo colorAttachmentInfo;
-    colorAttachmentInfo.setImageView(VulkanSwapChainImageViews[imageIndex]);
-    colorAttachmentInfo.setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
-    colorAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
-    colorAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eStore);
-    colorAttachmentInfo.setClearValue(clearColor);
-
-    vk::RenderingInfo renderingInfo;
-    vk::Rect2D rect2d;
-    rect2d.offset = vk::Offset2D{ 0, 0 };
-    rect2d.extent = VulkanSwapChainExtent;
-
-    renderingInfo.renderArea = rect2d;
-    renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments = &colorAttachmentInfo;
-
-    commandBuffer.beginRendering(renderingInfo);
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *lightingPassPipeline);
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
-    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, lightingPassPipelineLayout, 0, *lightingPassDescriptorSets[frameIndex], nullptr);
-    commandBuffer.draw(3, 1, 0, 0);  // Draw full-screen triangle
-    commandBuffer.endRendering();
-}
 
 void Renderer::transition_image_layout(
     vk::Image               image,
@@ -1826,14 +1180,16 @@ void Renderer::RecreateSwapChain()
     VulkanLogicalDevice.waitIdle();
 
     CleanupSwapChain();
-    CleanupGBuffer();
+    CleanupForwardPlus();
     CreateSwapChain();
     CreateImageViews();
     CreateDepthResources();
-    CreateGBuffer();
     
-    // Update lighting pass descriptor sets with new G-Buffer image views
-    CreateLightingPassDescriptorSets();
+    // Reinitialize Forward+ buffers
+    CreateForwardPlusLightBuffer();
+    
+    // Update descriptor sets
+    CreateForwardPlusDescriptorSets();
 }
 
 std::vector<const char*> Renderer::getRequiredExtensions() {
@@ -1846,4 +1202,310 @@ std::vector<const char*> Renderer::getRequiredExtensions() {
     }
 
     return extensions;
+}
+
+void Renderer::CreateForwardPlusLightBuffer()
+{
+    // Create buffer for light data
+    vk::DeviceSize bufferSize = sizeof(ForwardPlusLight) * MAX_LIGHTS;
+    CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, forwardPlusLightBuffer, forwardPlusLightBufferMemory);
+    forwardPlusLightBufferMapped = forwardPlusLightBufferMemory.mapMemory(0, bufferSize);
+    
+    // Initialize with default lights (commented out - no real lights yet)
+    // std::vector<ForwardPlusLight> lights(MAX_LIGHTS);
+    // for (uint32_t i = 0; i < MAX_LIGHTS; i++) {
+    //     lights[i].position = glm::vec3(sin(float(i) * 0.5f) * 3.0f, cos(float(i) * 0.7f) * 3.0f, 2.0f + sin(float(i) * 0.3f) * 1.0f);
+    //     lights[i].radius = 2.0f + sin(float(i) * 0.2f);
+    //     lights[i].color = glm::vec3(1.0f, 0.9f + float(i) * 0.01f, 0.8f);
+    //     lights[i].intensity = 1.0f;
+    // }
+    // memcpy(forwardPlusLightBufferMapped, lights.data(), sizeof(ForwardPlusLight) * MAX_LIGHTS);
+    
+    // Create tile light index buffer (max lights per tile * num tiles)
+    uint32_t tileCountX = (VulkanSwapChainExtent.width + TILE_SIZE - 1) / TILE_SIZE;
+    uint32_t tileCountY = (VulkanSwapChainExtent.height + TILE_SIZE - 1) / TILE_SIZE;
+    uint32_t tileCount = tileCountX * tileCountY;
+    vk::DeviceSize tileBufferSize = sizeof(uint32_t) * MAX_LIGHTS_PER_TILE * tileCount;
+    
+    CreateBuffer(tileBufferSize, vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, tileLightIndexBuffer, tileLightIndexBufferMemory);
+    
+    // Create tile count buffer (atomic counter for culling)
+    vk::DeviceSize tileCountBufferSize = sizeof(uint32_t) * tileCount;
+    CreateBuffer(tileCountBufferSize, vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, tileCountBuffer, tileCountBufferMemory);
+}
+
+void Renderer::CreateForwardPlusDescriptorSetLayout()
+{
+    std::array bindings = {
+        vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
+        vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
+        vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
+        vk::DescriptorSetLayoutBinding(3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr),
+        vk::DescriptorSetLayoutBinding(4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute, nullptr)
+    };
+    
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings.size(), bindings.data());
+    forwardPlusDescriptorSetLayout = vk::raii::DescriptorSetLayout(VulkanLogicalDevice, layoutInfo);
+}
+
+void Renderer::CreateForwardPlusDescriptorPool()
+{
+    std::array poolSize = {
+        vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT * 2),
+        vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT),
+        vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, MAX_FRAMES_IN_FLIGHT * 2)
+    };
+    
+    vk::DescriptorPoolCreateInfo poolInfo;
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size());
+    poolInfo.pPoolSizes = poolSize.data();
+    
+    forwardPlusDescriptorPool = vk::raii::DescriptorPool(VulkanLogicalDevice, poolInfo);
+}
+
+void Renderer::CreateForwardPlusDescriptorSets()
+{
+    forwardPlusDescriptorSets.clear();
+    
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *forwardPlusDescriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo;
+    allocInfo.descriptorPool = forwardPlusDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts = layouts.data();
+    
+    forwardPlusDescriptorSets = VulkanLogicalDevice.allocateDescriptorSets(allocInfo);
+    
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vk::DescriptorBufferInfo uboInfo;
+        uboInfo.buffer = VulkanUniformBuffers[i];
+        uboInfo.offset = 0;
+        uboInfo.range = sizeof(UniformBufferObject);
+        
+        vk::DescriptorImageInfo imageInfo;
+        imageInfo.sampler = textureSampler;
+        imageInfo.imageView = textureImageView;
+        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        
+        vk::DescriptorBufferInfo lightBufferInfo;
+        lightBufferInfo.buffer = forwardPlusLightBuffer;
+        lightBufferInfo.offset = 0;
+        lightBufferInfo.range = sizeof(ForwardPlusLight) * MAX_LIGHTS;
+        
+        vk::DescriptorBufferInfo tileIndexBufferInfo;
+        tileIndexBufferInfo.buffer = tileLightIndexBuffer;
+        tileIndexBufferInfo.offset = 0;
+        tileIndexBufferInfo.range = sizeof(uint32_t) * MAX_LIGHTS_PER_TILE * 
+            ((VulkanSwapChainExtent.width + TILE_SIZE - 1) / TILE_SIZE) * 
+            ((VulkanSwapChainExtent.height + TILE_SIZE - 1) / TILE_SIZE);
+        
+        uint32_t tileCountX = (VulkanSwapChainExtent.width + TILE_SIZE - 1) / TILE_SIZE;
+        uint32_t tileCountY = (VulkanSwapChainExtent.height + TILE_SIZE - 1) / TILE_SIZE;
+        vk::DescriptorBufferInfo tileCountBufferInfo;
+        tileCountBufferInfo.buffer = tileCountBuffer;
+        tileCountBufferInfo.offset = 0;
+        tileCountBufferInfo.range = sizeof(uint32_t) * tileCountX * tileCountY;
+        
+        std::array descriptorWrites = {
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 0, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &uboInfo, nullptr},
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 1, 0, 1, vk::DescriptorType::eCombinedImageSampler, &imageInfo, nullptr, nullptr},
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 2, 0, 1, vk::DescriptorType::eUniformBuffer, nullptr, &lightBufferInfo, nullptr},
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 3, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileIndexBufferInfo, nullptr},
+            vk::WriteDescriptorSet{forwardPlusDescriptorSets[i], 4, 0, 1, vk::DescriptorType::eStorageBuffer, nullptr, &tileCountBufferInfo, nullptr}
+        };
+        
+        VulkanLogicalDevice.updateDescriptorSets(descriptorWrites, {});
+    }
+}
+
+void Renderer::CreateLightCullingPipeline()
+{
+    vk::raii::ShaderModule computeShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/ForwardPlus_LightCulling_Comp.glsl.spv"));
+    
+    vk::PipelineShaderStageCreateInfo computeShaderStageInfo;
+    computeShaderStageInfo.stage = vk::ShaderStageFlagBits::eCompute;
+    computeShaderStageInfo.module = computeShaderModule;
+    computeShaderStageInfo.pName = "main";
+    
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &*forwardPlusDescriptorSetLayout;
+    
+    lightCullingPipelineLayout = vk::raii::PipelineLayout(VulkanLogicalDevice, pipelineLayoutInfo);
+    
+    vk::ComputePipelineCreateInfo pipelineInfo;
+    pipelineInfo.stage = computeShaderStageInfo;
+    pipelineInfo.layout = lightCullingPipelineLayout;
+    
+    lightCullingPipeline = vk::raii::Pipeline(VulkanLogicalDevice, nullptr, pipelineInfo);
+}
+
+void Renderer::CreateForwardPlusPipeline()
+{
+    vk::raii::ShaderModule vertexShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/ForwardPlus_Vertex.vert.glsl.spv"));
+    vk::raii::ShaderModule fragmentShaderModule = CreateShaderModule(ReadFile("../Engine/Binaries/Shaders/ForwardPlus_Fragment.frag.glsl.spv"));
+    
+    vk::PipelineShaderStageCreateInfo vertShaderStageInfo;
+    vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
+    vertShaderStageInfo.module = vertexShaderModule;
+    vertShaderStageInfo.pName = "main";
+    
+    vk::PipelineShaderStageCreateInfo fragShaderStageInfo;
+    fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment;
+    fragShaderStageInfo.module = fragmentShaderModule;
+    fragShaderStageInfo.pName = "main";
+    
+    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+    
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+    
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
+    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.primitiveRestartEnable = vk::False;
+    
+    vk::PipelineViewportStateCreateInfo viewportState;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    
+    vk::PipelineRasterizationStateCreateInfo rasterizer;
+    rasterizer.depthClampEnable = vk::False;
+    rasterizer.rasterizerDiscardEnable = vk::False;
+    rasterizer.polygonMode = vk::PolygonMode::eFill;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
+    rasterizer.depthBiasEnable = vk::False;
+    rasterizer.lineWidth = 1.0f;
+    
+    vk::PipelineMultisampleStateCreateInfo multisampling;
+    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+    multisampling.sampleShadingEnable = vk::False;
+    
+    vk::PipelineDepthStencilStateCreateInfo depthStencil;
+    depthStencil.depthTestEnable = vk::True;
+    depthStencil.depthWriteEnable = vk::True;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = vk::False;
+    depthStencil.stencilTestEnable = vk::False;
+    
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+    colorBlendAttachment.blendEnable = vk::False;
+    colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    
+    vk::PipelineColorBlendStateCreateInfo colorBlending;
+    colorBlending.logicOpEnable = vk::False;
+    colorBlending.logicOp = vk::LogicOp::eCopy;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    
+    std::vector dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor };
+    vk::PipelineDynamicStateCreateInfo dynamicState;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+    
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &*forwardPlusDescriptorSetLayout;
+    
+    forwardPlusPipelineLayout = vk::raii::PipelineLayout(VulkanLogicalDevice, pipelineLayoutInfo);
+    
+    vk::Format depthFormat = findDepthFormat();
+    
+    vk::PipelineRenderingCreateInfo pipelineRenderingInfo;
+    pipelineRenderingInfo.colorAttachmentCount = 1;
+    pipelineRenderingInfo.pColorAttachmentFormats = &VulkanSwapChainSurfaceFormat.format;
+    pipelineRenderingInfo.depthAttachmentFormat = depthFormat;
+    
+    vk::GraphicsPipelineCreateInfo graphicsPipelineInfo;
+    graphicsPipelineInfo.stageCount = 2;
+    graphicsPipelineInfo.pStages = shaderStages;
+    graphicsPipelineInfo.pVertexInputState = &vertexInputInfo;
+    graphicsPipelineInfo.pInputAssemblyState = &inputAssembly;
+    graphicsPipelineInfo.pViewportState = &viewportState;
+    graphicsPipelineInfo.pRasterizationState = &rasterizer;
+    graphicsPipelineInfo.pMultisampleState = &multisampling;
+    graphicsPipelineInfo.pDepthStencilState = &depthStencil;
+    graphicsPipelineInfo.pColorBlendState = &colorBlending;
+    graphicsPipelineInfo.pDynamicState = &dynamicState;
+    graphicsPipelineInfo.layout = forwardPlusPipelineLayout;
+    graphicsPipelineInfo.renderPass = nullptr;
+    graphicsPipelineInfo.pNext = &pipelineRenderingInfo;
+    
+    forwardPlusPipeline = vk::raii::Pipeline(VulkanLogicalDevice, nullptr, graphicsPipelineInfo);
+}
+
+void Renderer::RecordLightCulling(uint32_t imageIndex)
+{
+    auto& commandBuffer = VulkanCommandBuffers[frameIndex];
+    
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *lightCullingPipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, lightCullingPipelineLayout, 0, *forwardPlusDescriptorSets[frameIndex], nullptr);
+    
+    uint32_t groupCountX = (VulkanSwapChainExtent.width + TILE_SIZE - 1) / TILE_SIZE;
+    uint32_t groupCountY = (VulkanSwapChainExtent.height + TILE_SIZE - 1) / TILE_SIZE;
+    
+    commandBuffer.dispatch(groupCountX, groupCountY, 1);
+}
+
+void Renderer::RecordForwardPlusPass(uint32_t imageIndex)
+{
+    auto& commandBuffer = VulkanCommandBuffers[frameIndex];
+    
+    vk::ClearValue clearColor = vk::ClearColorValue(0.1f, 0.1f, 0.1f, 1.0f);
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+    
+    vk::RenderingAttachmentInfo colorAttachmentInfo;
+    colorAttachmentInfo.setImageView(VulkanSwapChainImageViews[imageIndex]);
+    colorAttachmentInfo.setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
+    colorAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
+    colorAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eStore);
+    colorAttachmentInfo.setClearValue(clearColor);
+    
+    vk::RenderingAttachmentInfo depthAttachmentInfo;
+    depthAttachmentInfo.setImageView(depthImageView);
+    depthAttachmentInfo.setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal);
+    depthAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
+    depthAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eDontCare);
+    depthAttachmentInfo.setClearValue(clearDepth);
+    
+    vk::RenderingInfo renderingInfo;
+    vk::Rect2D rect2d;
+    rect2d.offset = vk::Offset2D{0, 0};
+    rect2d.extent = VulkanSwapChainExtent;
+    
+    renderingInfo.renderArea = rect2d;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachmentInfo;
+    renderingInfo.pDepthAttachment = &depthAttachmentInfo;
+    
+    commandBuffer.beginRendering(renderingInfo);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *forwardPlusPipeline);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
+    commandBuffer.bindVertexBuffers(0, *VulkanVertexBuffer, {0});
+    commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint32);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, forwardPlusPipelineLayout, 0, *forwardPlusDescriptorSets[frameIndex], nullptr);
+    commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
+    commandBuffer.endRendering();
+}
+
+void Renderer::CleanupForwardPlus()
+{
+    forwardPlusLightBuffer = nullptr;
+    forwardPlusLightBufferMemory = nullptr;
+    tileLightIndexBuffer = nullptr;
+    tileLightIndexBufferMemory = nullptr;
+    tileCountBuffer = nullptr;
+    tileCountBufferMemory = nullptr;
 }
