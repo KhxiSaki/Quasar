@@ -761,10 +761,8 @@ void Renderer::LoadModelWithGLTF() {
                 Vertex vertex{};
 
                 const float* pos = reinterpret_cast<const float*>(&posBuffer.data[posBufferView.byteOffset + posAccessor.byteOffset + i * 12]);
-                // glTF uses a right-handed coordinate system with Y-up
-                // Vulkan uses a right-handed coordinate system with Y-down
-                // We need to flip the Y coordinate
-                vertex.pos = { pos[0], -pos[1], pos[2] };
+                // Convert from glTF Y-up to Vulkan Y-down (Z-up for Vulkan)
+                vertex.pos = { pos[0], -pos[2], pos[1] };
 
                 if (hasTexCoords)
                 {
