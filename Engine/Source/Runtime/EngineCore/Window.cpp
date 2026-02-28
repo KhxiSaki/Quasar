@@ -1,5 +1,7 @@
 #include "Window.h"
 
+#include "Renderer/ImGuiVulkanUtil.h"
+
 Window::Window(const char *title, int width, int height) : backgroundColor(glm::vec4(0, 0, 0, 1))
 {
     m_Title = title;
@@ -52,6 +54,7 @@ bool Window::init()
     glfwSetKeyCallback(m_Window, key_callback);
     glfwSetMouseButtonCallback(m_Window, mouse_button_callback);
     glfwSetCursorPosCallback(m_Window, mouse_position_callback);
+    glfwSetScrollCallback(m_Window, scroll_callback);
 
     return true;
 }
@@ -147,6 +150,9 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     if(!wind->m_PressedKeys[key])
         wind->m_PressedKeys[key] = (action == GLFW_PRESS);
 
+    if (wind->imGuiPtr) {
+        wind->imGuiPtr->handleKey(key, scancode, action, mods);
+    }
 
     // Window closing
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
@@ -171,6 +177,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     wind->m_HeldMouseButtons[button] = action != GLFW_RELEASE;
 	if (!wind->m_PressedMouseButtons[button])
 	    wind->m_PressedMouseButtons[button] = action == GLFW_PRESS;
+
+    if (wind->imGuiPtr) {
+        wind->imGuiPtr->handleMouseButton(button, action, mods);
+    }
 }
 
 void mouse_position_callback(GLFWwindow* window, double xpos, double ypos)
@@ -190,6 +200,18 @@ void mouse_position_callback(GLFWwindow* window, double xpos, double ypos)
 
     wind->lastMouseX = xpos;
     wind->lastMouseY = ypos;
+
+    if (wind->imGuiPtr) {
+        wind->imGuiPtr->handleMousePosition(xpos, ypos);
+    }
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    Window* wind = (Window*)glfwGetWindowUserPointer(window);
+    if (wind->imGuiPtr) {
+        wind->imGuiPtr->handleMouseScroll(xoffset, yoffset);
+    }
 }
 
 void Window::pollEvents()

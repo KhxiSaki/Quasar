@@ -64,6 +64,12 @@ void Renderer::Initialize()
     CreateDescriptorSets();
     CreateCommandBuffers();
     CreateSyncObjects();
+
+    // Initialize ImGui
+    imGui.init(VulkanLogicalDevice, VulkanPhysicalDevice, VulkanGraphicsQueue, VulkanCommandPool, queueIndex);
+    imGui.setColorFormat(VulkanSwapChainSurfaceFormat.format);
+    imGui.initialize(static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height));
+    imGui.initResources();
 }
 
 void Renderer::Render()
@@ -93,6 +99,13 @@ void Renderer::Render()
         throw std::runtime_error("failed to acquire swap chain image!");
     }
     UpdateUniformBuffer(frameIndex);
+
+    // Update ImGui display size for current window size
+    imGui.updateDisplaySize(static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height));
+
+    // Update ImGui
+    imGui.newFrame();
+    imGui.updateBuffers();
 
     // Only reset the fence if we are submitting work
     VulkanLogicalDevice.resetFences(*inFlightFences[frameIndex]);
@@ -1052,6 +1065,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, VulkanPipelineLayout, 0, *VulkanDescriptorSets[frameIndex], nullptr);
     commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
     commandBuffer.endRendering();
+
+    // Render ImGui
+    imGui.drawFrame(commandBuffer, VulkanSwapChainImageViews[imageIndex], VulkanSwapChainExtent);
     // After rendering, transition the swapchain image to PRESENT_SRC
     transition_image_layout(
         VulkanSwapChainImages[imageIndex],

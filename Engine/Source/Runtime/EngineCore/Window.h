@@ -16,6 +16,9 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 static void window_resize_callback(GLFWwindow* window, int width, int height);
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 static void mouse_position_callback(GLFWwindow* window, double xpos, double ypos);
+static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+
+class ImGuiVulkanUtil;
 
 /// The class responsible for Window Creation.
 class Window
@@ -25,6 +28,8 @@ public:
     glm::vec4 backgroundColor;
     float deltaMouseX, deltaMouseY;
     mutable float deltaTime;
+
+    ImGuiVulkanUtil* imGuiPtr = nullptr;
 public:
     Window(const char *title, int width, int height);
     ~Window();
@@ -84,4 +89,5 @@ private :
     friend void window_resize_callback(GLFWwindow* window, int width, int height);
     friend void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
     friend void mouse_position_callback(GLFWwindow* window, double xpos, double ypos);
+    friend void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 };

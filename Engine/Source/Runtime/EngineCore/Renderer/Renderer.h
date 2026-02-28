@@ -1,6 +1,8 @@
 #pragma once
 #include <memory>
 
+#include "ImGuiVulkanUtil.h"
+
 //TODO: Will move this to precompiled header in the future
 #include <algorithm>
 #include <cstdlib>
@@ -95,6 +97,9 @@ public:
 	vk::SurfaceFormatKHR GetSwapChainFormat() const { return VulkanSwapChainSurfaceFormat; }
 	vk::raii::ImageView& GetSwapChainImageView(uint32_t index) { return VulkanSwapChainImageViews[index]; }
 	const std::vector<vk::Image>& GetSwapChainImages() const { return VulkanSwapChainImages; }
+
+	// ImGui access
+	ImGuiVulkanUtil& GetImGui() { return imGui; }
 
 	vk::raii::CommandBuffer& GetCurrentCommandBuffer() { return VulkanCommandBuffers[frameIndex]; }
 	vk::raii::DescriptorSet& GetCurrentDescriptorSet() { return VulkanDescriptorSets[frameIndex]; }
@@ -389,6 +394,9 @@ protected:
 	//Model
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
+
+	//ImGui
+	ImGuiVulkanUtil imGui;
 private:
 
 	Window* RendererWindow = nullptr;
