@@ -469,7 +469,6 @@ void ImGuiVulkanUtil::initResources() {
 bool ImGuiVulkanUtil::newFrame() {
     ImGui::NewFrame();
 
-    ImGui::ShowDemoWindow();
 
     ImGui::EndFrame();
     ImGui::Render();
