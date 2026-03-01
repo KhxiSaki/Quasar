@@ -46,6 +46,14 @@ private:
 
     vk::Format colorFormat = vk::Format::eB8G8R8A8Unorm;
 
+    // Scene texture for rendering 3D scene inside ImGui viewport
+    vk::raii::Sampler* sceneTextureSampler = nullptr;
+    vk::raii::ImageView* sceneTextureImageView = nullptr;
+    bool sceneTextureValid = false;
+    bool sceneTextureRegistered = false;
+    VkDescriptorSet sceneDescriptorSet = VK_NULL_HANDLE;
+    bool showSceneViewport = true;
+
     void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
     void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
     vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags);
@@ -64,6 +72,14 @@ public:
     void updateDisplaySize(float width, float height);
     void initResources();
     void setStyle(uint32_t index);
+    void setSceneTextureInfo(vk::raii::Sampler* samplerPtr, vk::raii::ImageView* imageViewPtr, VkDescriptorSet descSet) { 
+        sceneTextureSampler = samplerPtr;
+        sceneTextureImageView = imageViewPtr;
+        sceneDescriptorSet = descSet;
+        sceneTextureValid = true;
+        sceneTextureRegistered = true;
+    }
+    void clearSceneTexture() { sceneTextureValid = false; sceneTextureRegistered = false; }
 
     bool newFrame();
     void updateBuffers();

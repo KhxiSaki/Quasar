@@ -1,5 +1,7 @@
 #include "ImGuiVulkanUtil.h"
 
+#include "../../ThirdParty/ImGui/backends/imgui_impl_vulkan.h"
+
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
@@ -42,6 +44,7 @@ void ImGuiVulkanUtil::initialize(float width, float height) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
     io.DisplaySize = ImVec2(width, height);
     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
@@ -52,6 +55,10 @@ void ImGuiVulkanUtil::initialize(float width, float height) {
     vulkanStyle.Colors[ImGuiCol_MenuBarBg] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
     vulkanStyle.Colors[ImGuiCol_Header] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
     vulkanStyle.Colors[ImGuiCol_CheckMark] = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+    // Set style for viewports
+    vulkanStyle.WindowRounding = 0.0f;
+    vulkanStyle.Colors[ImGuiCol_WindowBg].w = 1.0f;
 
     setStyle(0);
 }
@@ -269,15 +276,16 @@ void ImGuiVulkanUtil::initResources() {
 
     sampler = device->createSampler(samplerInfo);
 
-    vk::DescriptorPoolSize poolSize{ vk::DescriptorType::eCombinedImageSampler, 1 };
+    vk::DescriptorPoolSize poolSize{ vk::DescriptorType::eCombinedImageSampler, 2 };
     vk::DescriptorPoolCreateInfo poolInfo{};
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = 2;
+    poolInfo.maxSets = 3;
     poolInfo.poolSizeCount = 1;
     poolInfo.pPoolSizes = &poolSize;
 
     descriptorPool = device->createDescriptorPool(poolInfo);
 
+    // Font texture descriptor set layout (binding 0)
     vk::DescriptorSetLayoutBinding binding{};
     binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
     binding.descriptorCount = 1;
@@ -290,6 +298,7 @@ void ImGuiVulkanUtil::initResources() {
 
     descriptorSetLayout = device->createDescriptorSetLayout(layoutInfo);
 
+    // Allocate font descriptor set
     vk::DescriptorSetAllocateInfo allocInfo{};
     allocInfo.descriptorPool = *descriptorPool;
     allocInfo.descriptorSetCount = 1;
@@ -311,6 +320,9 @@ void ImGuiVulkanUtil::initResources() {
     writeSet.dstBinding = 0;
 
     device->updateDescriptorSets({ writeSet }, {});
+
+    // Tell ImGui about the font texture ID
+    io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(static_cast<VkDescriptorSet>(*descriptorSet)));
 
     vk::PipelineCacheCreateInfo pipelineCacheInfo{};
     pipelineCache = device->createPipelineCache(pipelineCacheInfo);
@@ -469,6 +481,54 @@ void ImGuiVulkanUtil::initResources() {
 bool ImGuiVulkanUtil::newFrame() {
     ImGui::NewFrame();
 
+    // Create dock space
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowViewport(viewport->ID);
+
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+    window_flags |= ImGuiWindowFlags_MenuBar;
+
+    ImGui::Begin("DockSpace", nullptr, window_flags);
+
+    ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+    ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
+    ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+
+    // Render scene viewport if we have a scene texture
+    if (sceneTextureValid && sceneTextureRegistered && sceneDescriptorSet != VK_NULL_HANDLE) {
+        ImGui::Begin("Scene Viewport", &showSceneViewport);
+        
+        // Get the available size for the image
+        ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+        
+        // Ensure minimum size
+        if (viewportSize.x < 1.0f) viewportSize.x = 1.0f;
+        if (viewportSize.y < 1.0f) viewportSize.y = 1.0f;
+        
+        // Calculate UV coordinates to maintain aspect ratio if needed
+        ImVec2 uv0 = ImVec2(0.0f, 0.0f);
+        ImVec2 uv1 = ImVec2(1.0f, 1.0f);
+        
+        // Display the scene texture using the descriptor set passed from Renderer
+        ImGui::Image((ImTextureID)sceneDescriptorSet, viewportSize, uv0, uv1);
+        
+        ImGui::End();
+    }
+
+    // Simple menu bar
+    if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("View")) {
+            ImGui::MenuItem("Scene Viewport", NULL, &showSceneViewport);
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+    }
+
+    ImGui::End();
 
     ImGui::EndFrame();
     ImGui::Render();
@@ -585,8 +645,12 @@ void ImGuiVulkanUtil::drawFrame(vk::raii::CommandBuffer& commandBuffer, vk::raii
             scissor.extent.height = static_cast<uint32_t>(pcmd->ClipRect.w - pcmd->ClipRect.y);
             commandBuffer.setScissor(0, scissor);
 
+            // Bind descriptor set from TextureId (Walnut's approach)
+            VkDescriptorSet descSet = reinterpret_cast<VkDescriptorSet>(pcmd->GetTexID());
             commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                           *pipelineLayout, 0, *descriptorSet, {});
+                                           *pipelineLayout, 0,
+                                           { descSet },
+                                           {});
 
             commandBuffer.drawIndexed(pcmd->ElemCount, 1, indexOffset, vertexOffset, 0);
             indexOffset += pcmd->ElemCount;

@@ -80,6 +80,20 @@ void Renderer::Initialize()
     imGui.setColorFormat(VulkanSwapChainSurfaceFormat.format);
     imGui.initialize(static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height));
     imGui.initResources();
+
+    // Create scene render target for rendering 3D scene to texture
+    // Only create if we have valid dimensions
+    if (VulkanSwapChainExtent.width > 0 && VulkanSwapChainExtent.height > 0) {
+        vk::Format depthFormat = findDepthFormat();
+        sceneRenderTarget.create(VulkanLogicalDevice, VulkanPhysicalDevice,
+            VulkanSwapChainExtent.width, VulkanSwapChainExtent.height,
+            VulkanSwapChainSurfaceFormat.format, depthFormat);
+        sceneRenderTarget.createSampler(VulkanLogicalDevice);
+        sceneRenderTarget.createDescriptorSet(VulkanLogicalDevice, VulkanDescriptorPool);
+        
+    // Set scene texture for ImGui viewport
+    imGui.setSceneTextureInfo(&sceneRenderTarget.getSampler(), &sceneRenderTarget.getColorImageView(), sceneRenderTarget.getVkDescriptorSet());
+    }
 }
 
 void Renderer::Render()
@@ -160,6 +174,7 @@ void Renderer::Render()
 
 void Renderer::Shutdown()
 {
+    sceneRenderTarget.destroy(VulkanLogicalDevice);
 }
 
 void Renderer::CreateInstance()
@@ -858,11 +873,11 @@ void Renderer::CreateDescriptorPool()
 {
     std::array poolSize{
      vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT),
-     vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT)
+     vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT + 10)  // +10 for scene render target and extras
     };
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT + 10;  // +10 for scene render target and extras
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size());
     poolInfo.pPoolSizes = poolSize.data();
 
@@ -1037,24 +1052,36 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eColorAttachmentOutput,
         vk::ImageAspectFlagBits::eColor);
     
-    // Transition depth image to depth attachment optimal layout
-    transition_image_layout(
-        *depthImage,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eDepthAttachmentOptimal,
-        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-        vk::ImageAspectFlagBits::eDepth);
-    
     // ==================== LIGHT CULLING (Compute) ====================
     RecordLightCulling(imageIndex);
     
-    // ==================== FORWARD+ RENDER ====================
+    // ==================== FORWARD+ RENDER to Scene Texture ====================
     RecordForwardPlusPass(imageIndex);
     
-    // Render ImGui on top
+    // Transition scene color image to shader read optimal for ImGui display
+    {
+        vk::ImageMemoryBarrier2 barrier;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+        barrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = *sceneRenderTarget.getColorImage();
+        barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+        vk::DependencyInfo dependency_info;
+        dependency_info.dependencyFlags = {};
+        dependency_info.imageMemoryBarrierCount = 1;
+        dependency_info.pImageMemoryBarriers = &barrier;
+
+        commandBuffer.pipelineBarrier2(dependency_info);
+    }
+    
+    // ==================== RENDER IMGUI WINDOW with Scene ====================
+    // Render ImGui on top (includes scene texture in a window)
     imGui.drawFrame(commandBuffer, VulkanSwapChainImageViews[imageIndex], VulkanSwapChainExtent);
     
     // Transition the swapchain image to PRESENT_SRC
@@ -1181,9 +1208,20 @@ void Renderer::RecreateSwapChain()
 
     CleanupSwapChain();
     CleanupForwardPlus();
+    
     CreateSwapChain();
     CreateImageViews();
     CreateDepthResources();
+    
+    // Recreate scene render target with new size (after swapchain is recreated)
+    if (VulkanSwapChainExtent.width > 0 && VulkanSwapChainExtent.height > 0) {
+        sceneRenderTarget.resize(VulkanLogicalDevice, VulkanPhysicalDevice,
+            VulkanSwapChainExtent.width, VulkanSwapChainExtent.height,
+            VulkanSwapChainSurfaceFormat.format, findDepthFormat());
+        // Clear and re-register texture with ImGui
+        imGui.clearSceneTexture();
+        imGui.setSceneTextureInfo(&sceneRenderTarget.getSampler(), &sceneRenderTarget.getColorImageView(), sceneRenderTarget.getVkDescriptorSet());
+    }
     
     // Reinitialize Forward+ buffers
     CreateForwardPlusLightBuffer();
@@ -1466,19 +1504,70 @@ void Renderer::RecordLightCulling(uint32_t imageIndex)
 void Renderer::RecordForwardPlusPass(uint32_t imageIndex)
 {
     auto& commandBuffer = VulkanCommandBuffers[frameIndex];
+
+    // Skip if scene render target not initialized
+    if (sceneRenderTarget.getWidth() == 0 || sceneRenderTarget.getHeight() == 0) {
+        return;
+    }
+
+    // Transition scene color image to COLOR_ATTACHMENT_OPTIMAL
+    {
+        vk::ImageMemoryBarrier2 barrier;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+        barrier.srcAccessMask = {};
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        barrier.oldLayout = vk::ImageLayout::eUndefined;
+        barrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = *sceneRenderTarget.getColorImage();
+        barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+        vk::DependencyInfo dependency_info;
+        dependency_info.dependencyFlags = {};
+        dependency_info.imageMemoryBarrierCount = 1;
+        dependency_info.pImageMemoryBarriers = &barrier;
+
+        commandBuffer.pipelineBarrier2(dependency_info);
+    }
+
+    // Transition scene depth image to DEPTH_ATTACHMENT_OPTIMAL
+    {
+        vk::ImageMemoryBarrier2 barrier;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+        barrier.srcAccessMask = {};
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        barrier.oldLayout = vk::ImageLayout::eUndefined;
+        barrier.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = *sceneRenderTarget.getDepthImage();
+        barrier.subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1};
+
+        vk::DependencyInfo dependency_info;
+        dependency_info.dependencyFlags = {};
+        dependency_info.imageMemoryBarrierCount = 1;
+        dependency_info.pImageMemoryBarriers = &barrier;
+
+        commandBuffer.pipelineBarrier2(dependency_info);
+    }
     
     vk::ClearValue clearColor = vk::ClearColorValue(0.1f, 0.1f, 0.1f, 1.0f);
     vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
     
+    // Render to scene render target instead of swapchain
     vk::RenderingAttachmentInfo colorAttachmentInfo;
-    colorAttachmentInfo.setImageView(VulkanSwapChainImageViews[imageIndex]);
+    colorAttachmentInfo.setImageView(sceneRenderTarget.getColorImageView());
     colorAttachmentInfo.setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
     colorAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
     colorAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eStore);
     colorAttachmentInfo.setClearValue(clearColor);
     
+    // Use scene render target's depth buffer
     vk::RenderingAttachmentInfo depthAttachmentInfo;
-    depthAttachmentInfo.setImageView(depthImageView);
+    depthAttachmentInfo.setImageView(sceneRenderTarget.getDepthImageView());
     depthAttachmentInfo.setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal);
     depthAttachmentInfo.setLoadOp(vk::AttachmentLoadOp::eClear);
     depthAttachmentInfo.setStoreOp(vk::AttachmentStoreOp::eDontCare);
@@ -1487,7 +1576,7 @@ void Renderer::RecordForwardPlusPass(uint32_t imageIndex)
     vk::RenderingInfo renderingInfo;
     vk::Rect2D rect2d;
     rect2d.offset = vk::Offset2D{0, 0};
-    rect2d.extent = VulkanSwapChainExtent;
+    rect2d.extent = vk::Extent2D{sceneRenderTarget.getWidth(), sceneRenderTarget.getHeight()};
     
     renderingInfo.renderArea = rect2d;
     renderingInfo.layerCount = 1;
@@ -1497,13 +1586,15 @@ void Renderer::RecordForwardPlusPass(uint32_t imageIndex)
     
     commandBuffer.beginRendering(renderingInfo);
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *forwardPlusPipeline);
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(VulkanSwapChainExtent.width), static_cast<float>(VulkanSwapChainExtent.height), 0.0f, 1.0f));
-    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), VulkanSwapChainExtent));
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(sceneRenderTarget.getWidth()), static_cast<float>(sceneRenderTarget.getHeight()), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D{sceneRenderTarget.getWidth(), sceneRenderTarget.getHeight()}));
     commandBuffer.bindVertexBuffers(0, *VulkanVertexBuffer, {0});
     commandBuffer.bindIndexBuffer(*VulkanIndexBuffer, 0, vk::IndexType::eUint32);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, forwardPlusPipelineLayout, 0, *forwardPlusDescriptorSets[frameIndex], nullptr);
     commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
     commandBuffer.endRendering();
+
+    // Transition scene color image to shader read optimal for ImGui display (done in recordCommandBuffer)
 }
 
 void Renderer::CleanupForwardPlus()

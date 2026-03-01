@@ -2,6 +2,7 @@
 #include <memory>
 
 #include "ImGuiVulkanUtil.h"
+#include "SceneRenderTarget.h"
 
 //TODO: Will move this to precompiled header in the future
 #include <algorithm>
@@ -130,6 +131,7 @@ public:
 
 	// ImGui access
 	ImGuiVulkanUtil& GetImGui() { return imGui; }
+	SceneRenderTarget& GetSceneRenderTarget() { return sceneRenderTarget; }
 
 	vk::raii::CommandBuffer& GetCurrentCommandBuffer() { return VulkanCommandBuffers[frameIndex]; }
 	vk::raii::DescriptorSet& GetCurrentDescriptorSet() { return VulkanDescriptorSets[frameIndex]; }
@@ -471,6 +473,7 @@ protected:
 
 	//ImGui
 	ImGuiVulkanUtil imGui;
+	SceneRenderTarget sceneRenderTarget;
 private:
 
 	Window* RendererWindow = nullptr;
